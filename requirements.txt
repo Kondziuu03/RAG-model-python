@@ -1,0 +1,8 @@
+pypdf
+langchain
+chromadb
+pytest
+boto3
+langchain_ollama
+langchain_chroma
+sentence_transformers
