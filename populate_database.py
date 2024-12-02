@@ -20,6 +20,7 @@ def main():
     if args.reset:
         print("Clearing Database")
         clear_database()
+        
 
     documents = load_documents()
     chunks = split_documents(documents)

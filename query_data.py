@@ -28,7 +28,7 @@ def main():
     query_text = args.query_text
     query_rag(query_text)
 
-def query_rag(query: str, reranked_results):
+def query_rag(query: str):
     reranked_results = get_reranked_documents(query)
 
     top_results = reranked_results[:10]
