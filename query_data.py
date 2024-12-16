@@ -11,13 +11,13 @@ RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 reranker = CrossEncoder(RERANKER_MODEL)
 
 PROMPT_TEMPLATE = """
-Use the following pieces of information to asnwer the user's question.
+Use the following pieces of information to answer the user's question.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
 Context: {context}
 Question: {question}
 
-Just provide a right answer without additional information.
+Provide a right answer with some words of explanation.
 """
 
 
@@ -29,25 +29,29 @@ def main():
     query_rag(query_text)
 
 def query_rag(query: str):
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    
     reranked_results = get_reranked_documents(query)
 
-    top_results = reranked_results[:10]
+    top_results = reranked_results[:3]
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
     prompt = prompt_template.format(context=context_text, question=query)
 
-    model = OllamaLLM(model="llama3.1:8b")
+    model = OllamaLLM(model="llama3.1")
     response_text = model.invoke(prompt)
 
     sources = [doc.metadata.get("id", None) for doc, _ in top_results]
-    formatted_response = f"Response: {response_text}\nSources: {sources}"
+    formatted_response = f"Response: {response_text}\n\nSources: {sources}"
     print(formatted_response)
     return response_text
 
 def get_reranked_documents(query: str):
     initial_results = get_similar_documents(query);
     
+    if not initial_results:
+        return initial_results
+
     query_doc_pairs = [(query, doc.page_content) for doc, _ in initial_results]
     scores = reranker.predict(query_doc_pairs)
 
@@ -59,7 +63,7 @@ def get_reranked_documents(query: str):
 
 def get_similar_documents(query: str):
      db = Chroma(persist_directory=CHROMA_PATH,embedding_function=get_embedding_function())
-     return db.similarity_search_with_score(query, k=100)
+     return db.similarity_search_with_score(query, k=10)
 
 if __name__ == "__main__":
     main()

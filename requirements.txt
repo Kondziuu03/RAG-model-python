@@ -1,8 +1,8 @@
 pypdf
-langchain
 chromadb
-pytest
-boto3
-langchain_ollama
-langchain_chroma
+langchain-ollama==0.2.1
+langchain-chroma==0.1.4
+langchain_community
+langchain_text_splitters
 sentence_transformers
+onnxruntime
