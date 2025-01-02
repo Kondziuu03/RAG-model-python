@@ -8,6 +8,7 @@ from get_embedding_function import get_embedding_function
 CHROMA_PATH = "chroma"
 
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+#RERANKER_MODEL = "radlab/polish-cross-encoder"
 reranker = CrossEncoder(RERANKER_MODEL)
 
 PROMPT_TEMPLATE = """
@@ -17,7 +18,7 @@ If you don't know the answer, just say that you don't know, don't try to make up
 Context: {context}
 Question: {question}
 
-Provide a right answer with some words of explanation.
+Provide a right answer with a short explanation.
 """
 
 
@@ -33,16 +34,18 @@ def query_rag(query: str):
     
     reranked_results = get_reranked_documents(query)
 
-    top_results = reranked_results[:3]
+    top_results = reranked_results[:5]
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     
     prompt = prompt_template.format(context=context_text, question=query)
 
-    model = OllamaLLM(model="llama3.1")
+    model = OllamaLLM(model="llama3.1:latest")
+    #model = OllamaLLM(model="SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M")
+    
     response_text = model.invoke(prompt)
 
     sources = [doc.metadata.get("id", None) for doc, _ in top_results]
-    formatted_response = f"Response: {response_text}\n\nSources: {sources}"
+    formatted_response = f"\n\nQuery: {query}\n\nResponse: {response_text}\n\nSources: {sources}\n"
     print(formatted_response)
     return response_text
 
