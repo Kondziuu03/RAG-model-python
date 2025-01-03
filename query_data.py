@@ -1,4 +1,7 @@
 import argparse
+import os
+from openai import OpenAI
+from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_ollama import OllamaLLM
@@ -7,9 +10,9 @@ from get_embedding_function import get_embedding_function
 
 CHROMA_PATH = "chroma"
 
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+#RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 #RERANKER_MODEL = "radlab/polish-cross-encoder"
-reranker = CrossEncoder(RERANKER_MODEL)
+#reranker = CrossEncoder(RERANKER_MODEL)
 
 PROMPT_TEMPLATE = """
 Use the following pieces of information to answer the user's question.
@@ -20,6 +23,10 @@ Question: {question}
 
 Provide a right answer with a short explanation.
 """
+
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 def main():
@@ -39,10 +46,18 @@ def query_rag(query: str):
     
     prompt = prompt_template.format(context=context_text, question=query)
 
-    model = OllamaLLM(model="llama3.1:latest")
-    #model = OllamaLLM(model="SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M")
-    
-    response_text = model.invoke(prompt)
+    # Use OpenAI's ChatCompletion API
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7
+    )
+
+    # Extract the response text
+    response_text = response.choices[0].message.content
 
     sources = [doc.metadata.get("id", None) for doc, _ in top_results]
     formatted_response = f"\n\nQuery: {query}\n\nResponse: {response_text}\n\nSources: {sources}\n"
@@ -52,18 +67,19 @@ def query_rag(query: str):
 def get_reranked_documents(query: str):
     initial_results = get_similar_documents(query);
     
-    if not initial_results:
-        return initial_results
+    return initial_results
 
+    """
     query_doc_pairs = [(query, doc.page_content) for doc, _ in initial_results]
     scores = reranker.predict(query_doc_pairs)
 
     # Sort by the re-ranked scores (descending)
     reranked_results = sorted(zip([doc for doc, _ in initial_results], scores),
                               key=lambda x: x[1], reverse=True)
-        
+    
     return [(doc, score) for doc, score in reranked_results]
-
+    """
+    
 def get_similar_documents(query: str):
      db = Chroma(persist_directory=CHROMA_PATH,embedding_function=get_embedding_function())
      return db.similarity_search_with_score(query, k=10)
