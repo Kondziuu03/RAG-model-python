@@ -1,6 +1,8 @@
 import os
 import shutil
 import streamlit as st
+import sqlite3
+import json
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain.schema.document import Document
@@ -12,6 +14,51 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
+
+DATABASE_PATH = "chat_history.db"
+
+def init_db():
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS chat_sessions (
+                    session_name TEXT,
+                    query TEXT,
+                    response TEXT,
+                    sources TEXT,
+                    model TEXT
+                )''')
+    conn.commit()
+    conn.close()
+
+def save_chat_history():
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM chat_sessions")
+    for session_name, history in st.session_state.chat_sessions.items():
+        for entry in history:
+            c.execute("INSERT INTO chat_sessions (session_name, query, response, sources, model) VALUES (?, ?, ?, ?, ?)",
+                      (session_name, entry['query'], entry['response'], json.dumps(entry['sources']), entry['model']))
+    conn.commit()
+    conn.close()
+
+def load_chat_history():
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("SELECT session_name, query, response, sources, model FROM chat_sessions")
+    rows = c.fetchall()
+    chat_sessions = {}
+    for row in rows:
+        session_name, query, response, sources, model = row
+        if session_name not in chat_sessions:
+            chat_sessions[session_name] = []
+        chat_sessions[session_name].append({
+            "query": query,
+            "response": response,
+            "sources": json.loads(sources),
+            "model": model
+        })
+    conn.close()
+    return chat_sessions
 
 # Load environment variables
 load_dotenv()
@@ -183,7 +230,8 @@ st.title("RAG-powered Document Assistant with Chat Sessions")
 
 # Initialize session state
 if "chat_sessions" not in st.session_state:
-    st.session_state.chat_sessions = {}  # Store all chat sessions
+    init_db()
+    st.session_state.chat_sessions = load_chat_history()
     st.session_state.current_session = None  # Currently active session
 
 # Sidebar for Session Management
@@ -223,6 +271,10 @@ def manage_sessions():
         st.write(f"### Active Session: {st.session_state.current_session}")
     else:
         st.write("No session currently active.")
+
+    # Save chat history on session change
+    if st.session_state.current_session:
+        save_chat_history()
 
 # File Upload and Database Management
 def upload_files():
@@ -266,6 +318,7 @@ def query_database():
                 "sources": sources,
                 "model": modelInfo
             })
+            save_chat_history()
 
         # Display Chat History
         st.subheader(f"Chat History for Session: {session_name}")
