@@ -7,7 +7,9 @@ from langchain.schema.document import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.prompts import ChatPromptTemplate
 from openai import OpenAI
+from langchain_ollama import OllamaLLM
 from langchain_openai import OpenAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -21,8 +23,11 @@ DATA_PATH = "data"
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 #reranker = CrossEncoder(RERANKER_MODEL)
 
-def get_embedding_function():
-    return OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
+def get_embedding_function(provider):
+    if provider == "OpenAI":
+        return OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
+    elif provider == "Ollama":
+        return OllamaEmbeddings(model="nomic-embed-text")
 
 def clear_database():
     if os.path.exists(CHROMA_PATH):
@@ -104,8 +109,8 @@ def populate_database(files):
     
     st.success("Database populated successfully!")
     
-def get_reranked_documents(query: str):
-    initial_results = get_similar_documents(query);
+def get_reranked_documents(query: str, provider="OpenAI"):
+    initial_results = get_similar_documents(query, provider);
     
     return initial_results
 
@@ -120,20 +125,20 @@ def get_reranked_documents(query: str):
     return [(doc, score) for doc, score in reranked_results]
     """
     
-def get_similar_documents(query: str):
-     db = Chroma(persist_directory=CHROMA_PATH,embedding_function=get_embedding_function())
+def get_similar_documents(query: str, provider="OpenAI"):
+     db = Chroma(persist_directory=CHROMA_PATH,embedding_function=get_embedding_function(provider))
      return db.similarity_search_with_score(query, k=10)
 
-def query_rag(query):
+def query_rag(query, provider="OpenAI", model="GPT-4o"):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embedding_function())
+    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embedding_function(provider))
     
     #results = db.similarity_search_with_score(query, k=5)
     #results = sorted(results, key=lambda x: x[1], reverse=True)[:5]
     
-    reranked_results = get_reranked_documents(query)
+    reranked_results = get_reranked_documents(query, provider)
 
     top_results = reranked_results[:5]
 
@@ -152,16 +157,26 @@ def query_rag(query):
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ]
-    )
+    client = None
+    response = None
+
+    if model == "OpenAI GPT-4o":
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ]
+        ).choices[0].message.content
+    else:
+        if model == "Meta Llama3.1":
+            client = OllamaLLM(model="llama3.1:latest")
+        elif model == "SpeakLeash Bielik v2.3":
+            client = OllamaLLM(model="SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M")
+        response = client.invoke(prompt)
     
-    return response.choices[0].message.content, [doc.metadata for doc, _ in top_results]
+    return response, [doc.metadata for doc, _ in top_results]
 
 # Streamlit App with Chat Sessions
 st.title("RAG-powered Document Assistant with Chat Sessions")
@@ -171,13 +186,8 @@ if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = {}  # Store all chat sessions
     st.session_state.current_session = None  # Currently active session
 
-# Sidebar Navigation
-st.sidebar.title("Navigation")
-options = ["Manage Sessions", "Upload & Populate Database", "Query Database"]
-choice = st.sidebar.radio("Go to", options)
-
 # Sidebar for Session Management
-if choice == "Manage Sessions":
+def manage_sessions():
     st.header("Manage Chat Sessions")
     
     # Create new session
@@ -215,7 +225,7 @@ if choice == "Manage Sessions":
         st.write("No session currently active.")
 
 # File Upload and Database Management
-elif choice == "Upload & Populate Database":
+def upload_files():
     st.header("Upload Documents")
 
     uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
@@ -227,7 +237,7 @@ elif choice == "Upload & Populate Database":
             populate_database(uploaded_files)
 
 # Query Interface with Chat History
-elif choice == "Query Database":
+def query_database():
     st.header("Query Interface")
 
     if not st.session_state.current_session:
@@ -238,15 +248,23 @@ elif choice == "Query Database":
 
         # Input query
         query_text = st.text_input("Enter your query:")
+        provider = st.selectbox("Provider", ["OpenAI", "Ollama"])
+
+        if provider == "OpenAI":
+            model = st.selectbox("Model", ["OpenAI GPT-4o"])
+        elif provider == "Ollama":
+            model = st.selectbox("Model", ["Meta Llama3.1", "SpeakLeash Bielik v2.3"])
+
         if st.button("Submit Query") and query_text:
             with st.spinner("Retrieving information..."):
-                response, sources = query_rag(query_text)
-            
+                response, sources = query_rag(query_text, provider, model)
+            modelInfo = f"Provider: {provider}, Model: {model}"
             # Add query and response to the session's chat history
             st.session_state.chat_sessions[session_name].append({
                 "query": query_text,
                 "response": response,
                 "sources": sources,
+                "model": modelInfo
             })
 
         # Display Chat History
@@ -255,10 +273,14 @@ elif choice == "Query Database":
         if chat_history:
             for idx, entry in enumerate(chat_history):
                 st.write(f"**Q{idx+1}:** {entry['query']}")
-                st.write(f"**A{idx+1}:** {entry['response']}")
+                st.write(f"**A{idx+1} ({entry['model']}):** {entry['response']}")
                 st.subheader("Sources:")
                 for source in entry['sources']:
                     st.write(source)
                 st.markdown("---")
         else:
             st.write("No chat history for this session.")
+
+# Sidebar Navigation
+pg = st.navigation([st.Page(manage_sessions, title="Manage sessions"), st.Page(upload_files, title="Upload files"), st.Page(query_database, title="Query database")])
+pg.run()
