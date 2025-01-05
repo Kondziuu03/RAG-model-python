@@ -17,6 +17,16 @@ from langchain_community.document_loaders import PyPDFLoader
 
 DATABASE_PATH = "chat_history.db"
 
+# Load environment variables
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+CHROMA_PATH = "chroma"
+DATA_PATH = "data"
+
+#RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+#reranker = CrossEncoder(RERANKER_MODEL)
+
 def init_db():
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
@@ -60,19 +70,18 @@ def load_chat_history():
     conn.close()
     return chat_sessions
 
-# Load environment variables
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+def delete_session(session_name):
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM chat_sessions WHERE session_name = ?", (session_name,))
+    conn.commit()
+    conn.close()
 
-CHROMA_PATH = "chroma"
-DATA_PATH = "data"
-
-#RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-#reranker = CrossEncoder(RERANKER_MODEL)
 
 def get_embedding_function(provider):
     if provider == "OpenAI":
-        return OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
+        return OpenAIEmbeddings(model="text-embedding-ada-002", 
+                              openai_api_key=OPENAI_API_KEY)
     elif provider == "Ollama":
         return OllamaEmbeddings(model="nomic-embed-text")
 
@@ -91,31 +100,46 @@ def split_documents(documents: list[Document]):
     )
     return text_splitter.split_documents(documents)
 
+def get_installed_ollama_models():
+    try:
+        import requests
+        response = requests.get('http://localhost:11434/api/tags')
+        if response.status_code == 200:
+            models = response.json()
+            # Extract just the model names from the response
+            return [model['name'] for model in models['models']]
+        return []
+    except:
+        return []
 
-def add_to_chroma(chunks: list[Document]):
-    embedding_function = get_embedding_function()
-    db = Chroma(
-        persist_directory=CHROMA_PATH, embedding_function=embedding_function
-    )
-
-    chunks_with_ids = calculate_chunk_ids(chunks)
-
-    existing_items = db.get(include=[])  # IDs are always included by default
-    existing_ids = set(existing_items["ids"])
-    print(f"Number of existing documents in DB: {len(existing_ids)}")
-
-    new_chunks = []
-    for chunk in chunks_with_ids:
-        if chunk.metadata["id"] not in existing_ids:
-            new_chunks.append(chunk)
-
-    if len(new_chunks):
-        print(f"Adding new documents: {len(new_chunks)}")
-        new_chunk_ids = [chunk.metadata["id"] for chunk in new_chunks]
-        db.add_documents(new_chunks, ids=new_chunk_ids)
-    else:
-        print("No new documents to add")
+def add_to_chroma(chunks: list[Document], provider="OpenAI"):
+    try:
+        if not chunks:
+            st.warning("No documents to add to the database.")
+            return
         
+        embedding_function = get_embedding_function(provider)
+        collection_name = f"documents_{provider.lower()}"  # Create separate collections
+        
+        db = Chroma(
+            persist_directory=CHROMA_PATH, 
+            embedding_function=embedding_function,
+            collection_name=collection_name
+        )
+
+        chunks_with_ids = calculate_chunk_ids(chunks)
+        chunk_ids = [chunk.metadata["id"] for chunk in chunks_with_ids]
+        
+        db.add_documents(chunks_with_ids, ids=chunk_ids)
+        
+        # Verify documents were added
+        collection_size = len(db.get()['ids'])
+        st.info(f"Added {collection_size} documents to the {provider} collection.")
+        
+    except Exception as e:
+        st.error(f"Error adding documents to database: {str(e)}")
+        raise e
+
 def calculate_chunk_ids(chunks):
     last_page_id = None
     current_chunk_index = 0
@@ -137,9 +161,12 @@ def calculate_chunk_ids(chunks):
 
     return chunks
 
-def populate_database(files):
+def populate_database(files, provider="OpenAI"):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
+    
+    if not os.path.exists(DATA_PATH):
+        os.makedirs(DATA_PATH)
     
     documents = []
 
@@ -152,7 +179,8 @@ def populate_database(files):
         documents.extend(loader.load())
 
     chunks = split_documents(documents)
-    add_to_chroma(chunks)
+
+    add_to_chroma(chunks, provider)
     
     st.success("Database populated successfully!")
     
@@ -173,15 +201,20 @@ def get_reranked_documents(query: str, provider="OpenAI"):
     """
     
 def get_similar_documents(query: str, provider="OpenAI"):
-     db = Chroma(persist_directory=CHROMA_PATH,embedding_function=get_embedding_function(provider))
-     return db.similarity_search_with_score(query, k=10)
+    collection_name = f"documents_{provider.lower()}"
+    
+    db = Chroma(
+         persist_directory=CHROMA_PATH,
+         embedding_function=get_embedding_function(provider),
+         collection_name=collection_name
+    )
+    
+    return db.similarity_search_with_score(query, k=10)
 
 def query_rag(query, provider="OpenAI", model="GPT-4o"):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=get_embedding_function(provider))
-    
     #results = db.similarity_search_with_score(query, k=5)
     #results = sorted(results, key=lambda x: x[1], reverse=True)[:5]
     
@@ -216,31 +249,26 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
                 {"role": "user", "content": prompt}
             ]
         ).choices[0].message.content
-    else:
-        if model == "Meta Llama3.1":
-            client = OllamaLLM(model="llama3.1:latest")
-        elif model == "SpeakLeash Bielik v2.3":
-            client = OllamaLLM(model="SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M")
+    elif provider == "Ollama":
+        client = OllamaLLM(model=model)
         response = client.invoke(prompt)
     
     return response, [doc.metadata for doc, _ in top_results]
 
-# Streamlit App with Chat Sessions
-st.title("RAG-powered Document Assistant with Chat Sessions")
+# Streamlit RAG
+st.title("RAG-powered Document Assistant")
 
-# Initialize session state
 if "chat_sessions" not in st.session_state:
     init_db()
     st.session_state.chat_sessions = load_chat_history()
-    st.session_state.current_session = None  # Currently active session
+    st.session_state.current_session = None
 
 # Sidebar for Session Management
 def manage_sessions():
     st.header("Manage Chat Sessions")
     
-    # Create new session
-    new_session_name = st.text_input("New Session Name")
-    if st.button("Create Session"):
+    new_session_name = st.text_input("New session name")
+    if st.button("Create session"):
         if new_session_name and new_session_name not in st.session_state.chat_sessions:
             st.session_state.chat_sessions[new_session_name] = []
             st.session_state.current_session = new_session_name
@@ -250,90 +278,95 @@ def manage_sessions():
         else:
             st.warning("Please enter a valid session name.")
 
-    # Select existing session
     if st.session_state.chat_sessions:
-        session_selector = st.selectbox("Select Session", st.session_state.chat_sessions.keys())
-        if st.button("Switch to Selected Session"):
+        session_selector = st.selectbox("Select session", st.session_state.chat_sessions.keys())
+        if st.button("Switch to selected session"):
             st.session_state.current_session = session_selector
             st.success(f"Switched to session '{session_selector}'!")
 
-    # Delete session
     if st.session_state.chat_sessions:
-        session_to_delete = st.selectbox("Delete Session", st.session_state.chat_sessions.keys())
-        if st.button("Delete Selected Session"):
+        session_to_delete = st.selectbox("Delete session", st.session_state.chat_sessions.keys())
+        
+        if st.button("Delete selected session"):
+            delete_session(session_to_delete)
+            
             del st.session_state.chat_sessions[session_to_delete]
+            
             if st.session_state.current_session == session_to_delete:
                 st.session_state.current_session = None
+                
             st.success(f"Session '{session_to_delete}' deleted!")
+            st.rerun()
 
-    # Show active session
     if st.session_state.current_session:
         st.write(f"### Active Session: {st.session_state.current_session}")
     else:
         st.write("No session currently active.")
 
-    # Save chat history on session change
     if st.session_state.current_session:
         save_chat_history()
 
-# File Upload and Database Management
 def upload_files():
     st.header("Upload Documents")
 
     uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
+    provider = st.selectbox("Provider", ["OpenAI", "Ollama"]) 
+    
     if st.button("Reset Database"):
         clear_database()
 
     if st.button("Populate Database") and uploaded_files:
-        with st.spinner("Processing files and populating the database..."):
-            populate_database(uploaded_files)
+        populate_database(uploaded_files, provider)
 
-# Query Interface with Chat History
 def query_database():
-    st.header("Query Interface")
+    st.header("Query")
 
     if not st.session_state.current_session:
         st.warning("No active session. Please create or select a session in 'Manage Sessions'.")
     else:
-        # Active session name
         session_name = st.session_state.current_session
 
-        # Input query
         query_text = st.text_input("Enter your query:")
         provider = st.selectbox("Provider", ["OpenAI", "Ollama"])
 
         if provider == "OpenAI":
             model = st.selectbox("Model", ["OpenAI GPT-4o"])
         elif provider == "Ollama":
-            model = st.selectbox("Model", ["Meta Llama3.1", "SpeakLeash Bielik v2.3"])
+            installed_models = get_installed_ollama_models()
+            if not installed_models:
+                st.error("No Ollama models found. Please ensure Ollama is running and has models installed.")
+                return
+            model = st.selectbox("Model", installed_models)
 
         if st.button("Submit Query") and query_text:
             with st.spinner("Retrieving information..."):
                 response, sources = query_rag(query_text, provider, model)
             modelInfo = f"Provider: {provider}, Model: {model}"
-            # Add query and response to the session's chat history
+            
             st.session_state.chat_sessions[session_name].append({
                 "query": query_text,
                 "response": response,
                 "sources": sources,
                 "model": modelInfo
             })
+            
             save_chat_history()
 
-        # Display Chat History
-        st.subheader(f"Chat History for Session: {session_name}")
+        st.subheader(f"Chat History for session: {session_name}")
         chat_history = st.session_state.chat_sessions[session_name]
         if chat_history:
             for idx, entry in enumerate(chat_history):
                 st.write(f"**Q{idx+1}:** {entry['query']}")
                 st.write(f"**A{idx+1} ({entry['model']}):** {entry['response']}")
-                st.subheader("Sources:")
-                for source in entry['sources']:
-                    st.write(source)
+                
+                # Use expander to show/hide sources
+                with st.expander(f"Sources #{idx+1}"):
+                    for source in entry['sources']:
+                        st.write(source)
+                    
                 st.markdown("---")
         else:
             st.write("No chat history for this session.")
 
-# Sidebar Navigation
-pg = st.navigation([st.Page(manage_sessions, title="Manage sessions"), st.Page(upload_files, title="Upload files"), st.Page(query_database, title="Query database")])
+pg = st.navigation([st.Page(manage_sessions, title="Manage sessions"), st.Page(upload_files, title="Upload files"), st.Page(query_database, title="Query")])
 pg.run()
