@@ -14,3 +14,4 @@ chroma/
 # Ignore system files
 .DS_Store
 Thumbs.db
+chat_history.db
