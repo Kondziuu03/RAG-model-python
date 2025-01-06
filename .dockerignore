@@ -1,1 +1,9 @@
-chroma/*
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+README.md
+data/
+chroma/
+chat_history.db
