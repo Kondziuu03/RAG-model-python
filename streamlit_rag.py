@@ -83,14 +83,24 @@ def get_embedding_function(provider):
         return OpenAIEmbeddings(model="text-embedding-ada-002", 
                               openai_api_key=OPENAI_API_KEY)
     elif provider == "Ollama":
-        return OllamaEmbeddings(model="nomic-embed-text")
+        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
 
-def clear_database():
-    if os.path.exists(CHROMA_PATH):
-        shutil.rmtree(CHROMA_PATH)
-    
-    st.success("Database cleared successfully!")
+def clear_database(provider="OpenAI"):
+    try:
+        collection_name = f"documents_{provider.lower()}"
+
+        db = Chroma(
+            persist_directory=CHROMA_PATH,
+            embedding_function=get_embedding_function(provider),
+            collection_name=collection_name
+        )
+
+        db.delete_collection()
         
+        st.success(f"Successfully cleared {provider} collection!")
+    except Exception as e:
+        st.error(f"Error clearing {provider} collection: {str(e)}")
+
 def split_documents(documents: list[Document]):
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
@@ -103,10 +113,9 @@ def split_documents(documents: list[Document]):
 def get_installed_ollama_models():
     try:
         import requests
-        response = requests.get('http://localhost:11434/api/tags')
+        response = requests.get('http://ollama:11434/api/tags')
         if response.status_code == 200:
             models = response.json()
-            # Extract just the model names from the response
             return [model['name'] for model in models['models']]
         return []
     except:
@@ -250,7 +259,7 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
             ]
         ).choices[0].message.content
     elif provider == "Ollama":
-        client = OllamaLLM(model=model)
+        client = OllamaLLM(model=model, base_url="http://ollama:11434")
         response = client.invoke(prompt)
     
     return response, [doc.metadata for doc, _ in top_results]
@@ -313,7 +322,7 @@ def upload_files():
     provider = st.selectbox("Provider", ["OpenAI", "Ollama"]) 
     
     if st.button("Reset Database"):
-        clear_database()
+        clear_database(provider)
 
     if st.button("Populate Database") and uploaded_files:
         populate_database(uploaded_files, provider)
