@@ -2,6 +2,7 @@ import os
 import shutil
 import streamlit as st
 import sqlite3
+import requests
 import json
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -20,6 +21,13 @@ DATABASE_PATH = "chat_history.db"
 # Load environment variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+auth = (os.getenv("LLM_USERNAME"), os.getenv("LLM_PASSWORD"))
+
+# Setup authentication for PG
+auth_kwargs = {
+    'auth': auth,
+    'verify': False, # Disable SSL verification
+}
 
 CHROMA_PATH = "chroma"
 DATA_PATH = "data"
@@ -84,6 +92,8 @@ def get_embedding_function(provider):
                               openai_api_key=OPENAI_API_KEY)
     elif provider == "Ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
+    elif provider == "PG":
+        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://localhost:11434")
 
 def clear_database(provider="OpenAI"):
     try:
@@ -112,14 +122,18 @@ def split_documents(documents: list[Document]):
 
 def get_installed_ollama_models():
     try:
-        import requests
         response = requests.get('http://ollama:11434/api/tags')
         if response.status_code == 200:
             models = response.json()
             return [model['name'] for model in models['models']]
         return []
     except:
-        return []
+        response = requests.get('http://localhost:11434/api/tags')
+        if response.status_code == 200:
+            models = response.json()
+            return [model['name'] for model in models['models']]
+       
+    return []
 
 def add_to_chroma(chunks: list[Document], provider="OpenAI"):
     try:
@@ -220,6 +234,29 @@ def get_similar_documents(query: str, provider="OpenAI"):
     
     return db.similarity_search_with_score(query, k=10)
 
+def PG(prompt):
+    base_url = "https://153.19.239.239/api/llm/prompt/chat"
+    data = {
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
+    }
+
+    response = requests.put(
+        base_url,
+        json=data,
+        headers={
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
+        **auth_kwargs,
+    )
+    response.raise_for_status()
+
+    response_json = response.json()
+    return response_json
+
 def query_rag(query, provider="OpenAI", model="GPT-4o"):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
@@ -242,6 +279,17 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
         Provide a right answer with a short explanation.
         """
     )
+    prompt_template_pl = ChatPromptTemplate.from_template(
+        """
+        Użyj poniższych informacji, aby odpowiedzieć na pytanie użytkownika.
+        Jeśli nie znasz odpowiedzi, po prostu powiedz, że nie wiesz, nie próbuj wymyślać odpowiedzi.
+
+        Kontekst: {context}
+        Pytanie: {question}
+
+        Podaj prawidłową odpowiedź wraz z krótkim wyjaśnieniem.
+        """
+    )
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
@@ -249,7 +297,7 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
     client = None
     response = None
 
-    if model == "OpenAI GPT-4o":
+    if provider == "OpenAI":
         client = OpenAI(api_key=OPENAI_API_KEY)
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -259,9 +307,13 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
             ]
         ).choices[0].message.content
     elif provider == "Ollama":
-        client = OllamaLLM(model=model, base_url="http://ollama:11434")
+        res = requests.get('http://ollama:11434/api/tags')
+        
+        client = OllamaLLM(model=model, base_url="http://ollama:11434" if res.status_code == 200 else "http://localhost:11434")
         response = client.invoke(prompt)
-    
+    elif provider == "PG":
+        response = PG(prompt_template_pl.format(context=context, question=query))
+
     return response, [doc.metadata for doc, _ in top_results]
 
 # Streamlit RAG
@@ -319,7 +371,7 @@ def upload_files():
     st.header("Upload Documents")
 
     uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
-    provider = st.selectbox("Provider", ["OpenAI", "Ollama"]) 
+    provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"]) 
     
     if st.button("Reset Database"):
         clear_database(provider)
@@ -336,7 +388,7 @@ def query_database():
         session_name = st.session_state.current_session
 
         query_text = st.text_input("Enter your query:")
-        provider = st.selectbox("Provider", ["OpenAI", "Ollama"])
+        provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"])
 
         if provider == "OpenAI":
             model = st.selectbox("Model", ["OpenAI GPT-4o"])
@@ -346,6 +398,8 @@ def query_database():
                 st.error("No Ollama models found. Please ensure Ollama is running and has models installed.")
                 return
             model = st.selectbox("Model", installed_models)
+        elif provider == "PG":
+            model = st.selectbox("Model", ["Bielik-11B-v2.2-Instruct model"])
 
         if st.button("Submit Query") and query_text:
             with st.spinner("Retrieving information..."):
