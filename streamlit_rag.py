@@ -93,7 +93,7 @@ def get_embedding_function(provider):
     elif provider == "Ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
     elif provider == "PG":
-        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://localhost:11434")
+        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
 
 def clear_database(provider="OpenAI"):
     try:
@@ -254,7 +254,7 @@ def PG(prompt):
     )
     response.raise_for_status()
 
-    response_json = response.json()
+    response_json = response.json()['response']
     return response_json
 
 def query_rag(query, provider="OpenAI", model="GPT-4o"):
@@ -279,6 +279,7 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
         Provide a right answer with a short explanation.
         """
     )
+    
     prompt_template_pl = ChatPromptTemplate.from_template(
         """
         Użyj poniższych informacji, aby odpowiedzieć na pytanie użytkownika.
