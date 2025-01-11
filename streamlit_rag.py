@@ -240,6 +240,7 @@ def PG(prompt):
         "messages": [
             {"role": "user", "content": prompt}
         ],
+        "max_length": 2000,
         "temperature": 0.7
     }
 
@@ -254,8 +255,8 @@ def PG(prompt):
     )
     response.raise_for_status()
 
-    response_json = response.json()['response']
-    return response_json
+    response_json = response.json()
+    return response_json['response']
 
 def query_rag(query, provider="OpenAI", model="GPT-4o"):
     if not os.path.exists(CHROMA_PATH):
