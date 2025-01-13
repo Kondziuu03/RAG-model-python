@@ -44,6 +44,11 @@ def init_db():
                     sources TEXT,
                     model TEXT
                 )''')
+    # Add new table for settings
+    c.execute('''CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )''')
     conn.commit()
     conn.close()
 
@@ -278,8 +283,21 @@ def get_similar_documents(query: str, provider="OpenAI"):
     k = st.session_state.get('chroma_k', 10)
     return db.similarity_search_with_score(query, k=k)
 
+def get_settings():
+    settings = load_settings()
+    return {
+        'OPENAI_API_KEY': settings.get('openai_api_key', os.getenv("OPENAI_API_KEY")),
+        'OLLAMA_URL': settings.get('ollama_url', 'http://ollama:11434'),
+        'PG_URL': settings.get('pg_url', 'https://153.19.239.239'),
+        'PG_USERNAME': settings.get('pg_username', os.getenv("LLM_USERNAME")),
+        'PG_PASSWORD': settings.get('pg_password', os.getenv("LLM_PASSWORD"))
+    }
+
 def PG(prompt):
-    base_url = "https://153.19.239.239/api/llm/prompt/chat"
+    settings = get_settings()
+    base_url = settings['PG_URL']
+    api_endpoint = f"{base_url}/api/llm/prompt/chat"
+    auth = (settings['PG_USERNAME'], settings['PG_PASSWORD'])
     data = {
         "messages": [
             {"role": "user", "content": prompt}
@@ -289,7 +307,7 @@ def PG(prompt):
     }
 
     response = requests.put(
-        base_url,
+        api_endpoint,
         json=data,
         headers={
             'Accept': 'application/json',
@@ -345,7 +363,8 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
     response = None
 
     if provider == "OpenAI":
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        settings = get_settings()
+        client = OpenAI(api_key=settings['OPENAI_API_KEY'])
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -354,9 +373,9 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
             ]
         ).choices[0].message.content
     elif provider == "Ollama":
-        res = requests.get('http://ollama:11434/api/tags')
+        res = requests.get(f"{settings['OLLAMA_URL']}/api/tags")
         
-        client = OllamaLLM(model=model, base_url="http://ollama:11434" if res.status_code == 200 else "http://localhost:11434")
+        client = OllamaLLM(model=model, base_url=settings['OLLAMA_URL'])
         response = client.invoke(prompt)
     elif provider == "PG":
         response = PG(prompt_template_pl.format(context=context, question=query))
@@ -366,9 +385,9 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
 
 def pull_ollama_model(model_name):
     try:
-        response = requests.post('http://ollama:11434/api/pull', json={'name': model_name})
-        if response.status_code != 200:
-            response = requests.post('http://localhost:11434/api/pull', json={'name': model_name})
+        settings = get_settings()
+        
+        response = requests.post(f"{settings['OLLAMA_URL']}/api/pull", json={'name': model_name})
         
         if response.status_code == 200:
             return True, "Model pulled successfully!"
@@ -376,9 +395,26 @@ def pull_ollama_model(model_name):
             return False, f"Failed to pull model: {response.text}"
     except Exception as e:
         return False, f"Error pulling model: {str(e)}"
+    
+def save_settings(settings_dict):
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    for key, value in settings_dict.items():
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                  (key, value))
+    conn.commit()
+    conn.close()
+
+def load_settings():
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("SELECT key, value FROM settings")
+    settings = dict(c.fetchall())
+    conn.close()
+    return settings
 
 # Streamlit RAG
-st.title("RAG-powered Document Assistant")
+st.title("RAG - przeszukiwanie dokumentów")
 
 if "chat_sessions" not in st.session_state:
     init_db()
@@ -387,29 +423,29 @@ if "chat_sessions" not in st.session_state:
 
 # Sidebar for Session Management
 def manage_sessions():
-    st.header("Manage Chat Sessions")
+    st.header("Zarządzanie sesjami")
     
-    new_session_name = st.text_input("New session name")
-    if st.button("Create session"):
+    new_session_name = st.text_input("Nazwa nowej sesji")
+    if st.button("Utwórz sesję"):
         if new_session_name and new_session_name not in st.session_state.chat_sessions:
             st.session_state.chat_sessions[new_session_name] = []
             st.session_state.current_session = new_session_name
-            st.success(f"Session '{new_session_name}' created and activated!")
+            st.success(f"Sesja '{new_session_name}' utworzona i aktywowana!")
         elif new_session_name in st.session_state.chat_sessions:
-            st.warning("Session already exists!")
+            st.warning("Sesja już istnieje!")
         else:
-            st.warning("Please enter a valid session name.")
+            st.warning("Proszę podać nazwę sesji.")
 
     if st.session_state.chat_sessions:
-        session_selector = st.selectbox("Select session", st.session_state.chat_sessions.keys())
-        if st.button("Switch to selected session"):
+        session_selector = st.selectbox("Wybierz sesję", st.session_state.chat_sessions.keys())
+        if st.button("Przełącz na wybraną sesję"):
             st.session_state.current_session = session_selector
-            st.success(f"Switched to session '{session_selector}'!")
+            st.success(f"Przełączono na sesję '{session_selector}'!")
 
     if st.session_state.chat_sessions:
-        session_to_delete = st.selectbox("Delete session", st.session_state.chat_sessions.keys())
+        session_to_delete = st.selectbox("Usuń sesję", st.session_state.chat_sessions.keys())
         
-        if st.button("Delete selected session"):
+        if st.button("Usuń wybraną sesję"):
             delete_session(session_to_delete)
             
             del st.session_state.chat_sessions[session_to_delete]
@@ -417,57 +453,57 @@ def manage_sessions():
             if st.session_state.current_session == session_to_delete:
                 st.session_state.current_session = None
                 
-            st.success(f"Session '{session_to_delete}' deleted!")
+            st.success(f"Sesja '{session_to_delete}' usunięta!")
             st.rerun()
 
     if st.session_state.current_session:
-        st.write(f"### Active Session: {st.session_state.current_session}")
+        st.write(f"### Aktywna sesja: {st.session_state.current_session}")
     else:
-        st.write("No session currently active.")
+        st.write("Brak aktywnej sesji.")
 
     if st.session_state.current_session:
         save_chat_history()
 
 def upload_files():
-    st.header("Upload Documents")
+    st.header("Dokumenty")
 
     if not st.session_state.current_session:
-        st.warning("No active session. Please create or select a session in 'Manage Sessions'.")
+        st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
     else:
-        st.write(f"### Active Session: {st.session_state.current_session}")
+        st.write(f"### Aktywna sesja: {st.session_state.current_session}")
         
-        uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
-        provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"]) 
+        uploaded_files = st.file_uploader("Prześlij pliki PDF", type="pdf", accept_multiple_files=True)
+        provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"]) 
         
-        if st.button("Reset Database"):
+        if st.button("Resetuj bazę dokumentów"):
             clear_database(provider)
 
-        if st.button("Populate Database") and uploaded_files:
+        if st.button("Załaduj wybrane dokumenty") and uploaded_files:
             populate_database(uploaded_files, provider)
 
 def query_database():
-    st.header("Query")
+    st.header("Chat")
 
     if not st.session_state.current_session:
-        st.warning("No active session. Please create or select a session in 'Manage Sessions'.")
+        st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
     else:
-        st.write(f"### Active Session: {st.session_state.current_session}")
+        st.write(f"### Aktywna sesja: {st.session_state.current_session}")
          
         session_name = st.session_state.current_session
 
-        query_text = st.text_input("Enter your query:")
+        query_text = st.text_input("Pytanie:")
         
         # Create columns for provider and model selection
         col1, col2 = st.columns(2)
         with col1:
-            provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"])
+            provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"])
         with col2:
             if provider == "OpenAI":
                 model = st.selectbox("Model", ["OpenAI GPT-4o"])
             elif provider == "Ollama":
                 installed_models = get_installed_ollama_models()
                 if not installed_models:
-                    st.error("No Ollama models found. Please ensure Ollama is running and has models installed.")
+                    st.error("Brak modeli Ollama. Upewnij się, że Ollama działa i ma zainstalowane modele.")
                     return
                 model = st.selectbox("Model", installed_models)
             elif provider == "PG":
@@ -477,26 +513,26 @@ def query_database():
         col3, col4 = st.columns(2)
         with col3:
             chroma_k = st.number_input(
-                "Documents retrieved from ChromaDB",
+                "Dokumenty pobrane z ChromaDB",
                 min_value=1,
                 max_value=20,
                 value=10
             )
         with col4:
             rerank_k = st.number_input(
-                "Documents retrieved from reranking",
+                "Dokumenty pobrane z rerankingu",
                 min_value=1,
                 max_value=chroma_k,
                 value=min(5, chroma_k)
             )
 
-        if st.button("Submit Query") and query_text:
-            with st.spinner("Retrieving information..."):
+        if st.button("Wyślij") and query_text:
+            with st.spinner("Pobieranie informacji..."):
                 # Update the function calls to use the new k values
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
                 response, sources = query_rag(query_text, provider, model)
-            modelInfo = f"Provider: {provider}, Model: {model}"
+            modelInfo = f"Dostawca: {provider}, Model: {model}"
             
             st.session_state.chat_sessions[session_name].append({
                 "query": query_text,
@@ -507,7 +543,7 @@ def query_database():
             
             save_chat_history()
 
-        st.subheader(f"Chat History for session: {session_name}")
+        st.subheader(f"Historia chatu dla sesji: {session_name}")
         chat_history = st.session_state.chat_sessions[session_name]
         if chat_history:
             for idx, entry in enumerate(chat_history):
@@ -515,42 +551,88 @@ def query_database():
                 st.write(f"**A{idx+1} ({entry['model']}):** {entry['response']}")
                 
                 # Use expander to show/hide sources
-                with st.expander(f"Sources #{idx+1}"):
+                with st.expander(f"Źródła #{idx+1}"):
                     for source in entry['sources']:
                         st.write(source)
                     
                 st.markdown("---")
         else:
-            st.write("No chat history for this session.")
+            st.write("Brak historii chatu dla tej sesji.")
 
 def ollama_management():
     st.header("Ollama Models Management")
     
-    model_name = st.text_input("Enter model name to pull (e.g., llama3.1, mistral)")
+    model_name = st.text_input("Nazwa modelu do pobrania (np. llama3.1, mistral)")
     
     if st.button("Pull Model"):
         if not model_name:
-            st.warning("Please enter a model name")
+            st.warning("Proszę podać nazwę modelu")
         else:
-            with st.spinner(f"Pulling model {model_name}..."):
+            with st.spinner(f"Pobieranie modelu {model_name}..."):
                 success, message = pull_ollama_model(model_name)
                 if success:
                     st.success(message)
                 else:
                     st.error(message)
     
-    st.subheader("Installed Models")
+    st.subheader("Zainstalowane modele")
     installed_models = get_installed_ollama_models()
     if installed_models:
         for model in installed_models:
             st.write(f"- {model}")
     else:
-        st.info("No models currently installed")
+        st.info("Brak zainstalowanych modeli")
+
+def settings_page():
+    st.header("Ustawienia")
+
+    current_settings = load_settings()
+
+    openai_key = st.text_input(
+        "OpenAI - API Key",
+        value=current_settings.get('openai_api_key', ''),
+        type="password"
+    )
+    
+    ollama_url = st.text_input(
+        "Ollama - URL",
+        value=current_settings.get('ollama_url', 'http://ollama:11434')
+    )
+    
+    pg_url = st.text_input(
+        "PG Bielik - URL",
+        value=current_settings.get('pg_url', 'https://153.19.239.239')
+    )
+    
+    pg_username = st.text_input(
+        "PG Bielik - nazwa użytkownika",
+        value=current_settings.get('pg_username', ''),
+        type="password"
+    )
+    
+    pg_password = st.text_input(
+        "PG Bielik - hasło",
+        value=current_settings.get('pg_password', ''),
+        type="password"
+    )
+    
+    if st.button("Save Settings"):
+        settings = {
+            'openai_api_key': openai_key,
+            'ollama_url': ollama_url,
+            'pg_url': pg_url,
+            'pg_username': pg_username,
+            'pg_password': pg_password
+        }
+        save_settings(settings)
+        st.success("Ustawienia zostały zapisane!")
 
 pg = st.navigation([
-    st.Page(manage_sessions, title="Manage sessions"), 
-    st.Page(upload_files, title="Upload files"), 
-    st.Page(query_database, title="Query"),
-    st.Page(ollama_management, title="Ollama")
+    st.Page(settings_page, title="Ustawienia"),
+    st.Page(ollama_management, title="Ollama"),
+    st.Page(manage_sessions, title="Sesje"), 
+    st.Page(upload_files, title="Dokumenty"), 
+    st.Page(query_database, title="Chat"),
 ])
+
 pg.run()
