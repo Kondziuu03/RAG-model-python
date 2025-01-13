@@ -18,12 +18,10 @@ from langchain_community.document_loaders import PyPDFLoader
 
 DATABASE_PATH = "chat_history.db"
 
-# Load environment variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 auth = (os.getenv("LLM_USERNAME"), os.getenv("LLM_PASSWORD"))
 
-# Setup authentication for PG
 auth_kwargs = {
     'auth': auth,
     'verify': False, # Disable SSL verification
@@ -44,7 +42,6 @@ def init_db():
                     sources TEXT,
                     model TEXT
                 )''')
-    # Add new table for settings
     c.execute('''CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
@@ -83,14 +80,12 @@ def load_chat_history():
     return chat_sessions
 
 def delete_session(session_name):
-    # Delete from SQLite database
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM chat_sessions WHERE session_name = ?", (session_name,))
     conn.commit()
     conn.close()
 
-    # Clear Chroma collections for all providers
     providers = ["OpenAI", "Ollama", "PG"]
     for provider in providers:
         try:
@@ -121,7 +116,6 @@ def clear_database(provider="OpenAI"):
             
         collection_name = get_collection_name(provider, st.session_state.current_session)
 
-        # Clear Chroma collection
         db = Chroma(
             persist_directory=CHROMA_PATH,
             embedding_function=get_embedding_function(provider),
@@ -184,9 +178,8 @@ def add_to_chroma(chunks: list[Document], provider="OpenAI"):
         
         db.add_documents(chunks_with_ids, ids=chunk_ids)
         
-        # Verify documents were added
         collection_size = len(db.get()['ids'])
-        st.info(f"Added {collection_size} documents to the {collection_name} collection.")
+        st.info(f"Dodano {collection_size} dokumentów do kolekcji {collection_name}.")
         
     except Exception as e:
         st.error(f"Error adding documents to database: {str(e)}")
@@ -224,7 +217,6 @@ def populate_database(files, provider="OpenAI"):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
     
-    # Use the new dynamic data path
     data_path = get_data_path(provider, st.session_state.current_session)
     if not os.path.exists(data_path):
         os.makedirs(data_path)
@@ -247,10 +239,8 @@ def populate_database(files, provider="OpenAI"):
 def get_reranked_documents(query: str, provider="OpenAI"):
     initial_results = get_similar_documents(query, provider);
     
-    # Sort by score (distance) - lowest distance first
     sorted_results = sorted(initial_results, key=lambda x: x[1])
     
-    # Print similarity scores for debugging
     #for doc, score in sorted_results:
         #st.write(f"Similarity score: {score:.4f} - {doc.page_content[:100]}...")
 
@@ -260,7 +250,6 @@ def get_reranked_documents(query: str, provider="OpenAI"):
     query_doc_pairs = [(query, doc.page_content) for doc, _ in initial_results]
     scores = reranker.predict(query_doc_pairs)
 
-    # Sort by the re-ranked scores (descending)
     reranked_results = sorted(zip([doc for doc, _ in initial_results], scores),
                               key=lambda x: x[1], reverse=True)
     
@@ -390,11 +379,11 @@ def pull_ollama_model(model_name):
         response = requests.post(f"{settings['OLLAMA_URL']}/api/pull", json={'name': model_name})
         
         if response.status_code == 200:
-            return True, "Model pulled successfully!"
+            return True, "Model pobrany prawidłowo!"
         else:
-            return False, f"Failed to pull model: {response.text}"
+            return False, f"Nie udało się pobrać modelu: {response.text}"
     except Exception as e:
-        return False, f"Error pulling model: {str(e)}"
+        return False, f"Błąd podczas pobierania modelu: {str(e)}"
     
 def save_settings(settings_dict):
     conn = sqlite3.connect(DATABASE_PATH)
@@ -413,7 +402,6 @@ def load_settings():
     conn.close()
     return settings
 
-# Streamlit RAG
 st.title("RAG - przeszukiwanie dokumentów")
 
 if "chat_sessions" not in st.session_state:
@@ -421,7 +409,6 @@ if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = load_chat_history()
     st.session_state.current_session = None
 
-# Sidebar for Session Management
 def manage_sessions():
     st.header("Zarządzanie sesjami")
     
@@ -472,14 +459,15 @@ def upload_files():
     else:
         st.write(f"### Aktywna sesja: {st.session_state.current_session}")
         
-        uploaded_files = st.file_uploader("Prześlij pliki PDF", type="pdf", accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Prześlij pliki PDF", type="pdf", accept_multiple_files=True, help="Maksymalny rozmiar pliku: 200MB")
         provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"]) 
         
         if st.button("Resetuj bazę dokumentów"):
             clear_database(provider)
 
         if st.button("Załaduj wybrane dokumenty") and uploaded_files:
-            populate_database(uploaded_files, provider)
+            with st.spinner("Przetwarzanie dokumentów..."):
+                populate_database(uploaded_files, provider)
 
 def query_database():
     st.header("Chat")
@@ -493,7 +481,6 @@ def query_database():
 
         query_text = st.text_input("Pytanie:")
         
-        # Create columns for provider and model selection
         col1, col2 = st.columns(2)
         with col1:
             provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"])
@@ -509,7 +496,6 @@ def query_database():
             elif provider == "PG":
                 model = st.selectbox("Model", ["Bielik-11B-v2.2-Instruct model"])
 
-        # Create columns for document retrieval settings
         col3, col4 = st.columns(2)
         with col3:
             chroma_k = st.number_input(
@@ -528,7 +514,6 @@ def query_database():
 
         if st.button("Wyślij") and query_text:
             with st.spinner("Pobieranie informacji..."):
-                # Update the function calls to use the new k values
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
                 response, sources = query_rag(query_text, provider, model)
@@ -550,7 +535,6 @@ def query_database():
                 st.write(f"**Q{idx+1}:** {entry['query']}")
                 st.write(f"**A{idx+1} ({entry['model']}):** {entry['response']}")
                 
-                # Use expander to show/hide sources
                 with st.expander(f"Źródła #{idx+1}"):
                     for source in entry['sources']:
                         st.write(source)
@@ -564,7 +548,7 @@ def ollama_management():
     
     model_name = st.text_input("Nazwa modelu do pobrania (np. llama3.1, mistral)")
     
-    if st.button("Pull Model"):
+    if st.button("Pobierz model"):
         if not model_name:
             st.warning("Proszę podać nazwę modelu")
         else:
@@ -589,7 +573,7 @@ def settings_page():
     current_settings = load_settings()
 
     openai_key = st.text_input(
-        "OpenAI - API Key",
+        "OpenAI - Klucz API",
         value=current_settings.get('openai_api_key', ''),
         type="password"
     )
@@ -605,18 +589,18 @@ def settings_page():
     )
     
     pg_username = st.text_input(
-        "PG Bielik - nazwa użytkownika",
+        "PG Bielik - Nazwa użytkownika",
         value=current_settings.get('pg_username', ''),
         type="password"
     )
     
     pg_password = st.text_input(
-        "PG Bielik - hasło",
+        "PG Bielik - Hasło",
         value=current_settings.get('pg_password', ''),
         type="password"
     )
     
-    if st.button("Save Settings"):
+    if st.button("Zapisz Ustawenia"):
         settings = {
             'openai_api_key': openai_key,
             'ollama_url': ollama_url,
