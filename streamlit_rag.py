@@ -30,7 +30,6 @@ auth_kwargs = {
 }
 
 CHROMA_PATH = "chroma"
-DATA_PATH = "data"
 
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 #reranker = CrossEncoder(RERANKER_MODEL)
@@ -79,12 +78,26 @@ def load_chat_history():
     return chat_sessions
 
 def delete_session(session_name):
+    # Delete from SQLite database
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM chat_sessions WHERE session_name = ?", (session_name,))
     conn.commit()
     conn.close()
 
+    # Clear Chroma collections for all providers
+    providers = ["OpenAI", "Ollama", "PG"]
+    for provider in providers:
+        try:
+            collection_name = get_collection_name(provider, session_name)
+            db = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embedding_function(provider),
+                collection_name=collection_name
+            )
+            db.delete_collection()
+        except Exception as e:
+            st.warning(f"Could not delete collection for {provider}: {str(e)}")
 
 def get_embedding_function(provider):
     if provider == "OpenAI":
@@ -97,19 +110,23 @@ def get_embedding_function(provider):
 
 def clear_database(provider="OpenAI"):
     try:
-        collection_name = f"documents_{provider.lower()}"
+        if not st.session_state.current_session:
+            st.error("Please select or create a session first!")
+            return
+            
+        collection_name = get_collection_name(provider, st.session_state.current_session)
 
+        # Clear Chroma collection
         db = Chroma(
             persist_directory=CHROMA_PATH,
             embedding_function=get_embedding_function(provider),
             collection_name=collection_name
         )
-
         db.delete_collection()
         
-        st.success(f"Successfully cleared {provider} collection!")
+        st.success(f"Successfully cleared {collection_name} collection!")
     except Exception as e:
-        st.error(f"Error clearing {provider} collection: {str(e)}")
+        st.error(f"Error clearing collection: {str(e)}")
 
 def split_documents(documents: list[Document]):
     text_splitter = RecursiveCharacterTextSplitter(
@@ -135,14 +152,21 @@ def get_installed_ollama_models():
        
     return []
 
+def get_collection_name(provider, session_name):
+    return f"documents_{provider.lower()}_{session_name}"
+
 def add_to_chroma(chunks: list[Document], provider="OpenAI"):
     try:
         if not chunks:
             st.warning("No documents to add to the database.")
             return
         
+        if not st.session_state.current_session:
+            st.error("Please select or create a session first!")
+            return
+        
         embedding_function = get_embedding_function(provider)
-        collection_name = f"documents_{provider.lower()}"  # Create separate collections
+        collection_name = get_collection_name(provider, st.session_state.current_session)
         
         db = Chroma(
             persist_directory=CHROMA_PATH, 
@@ -157,7 +181,7 @@ def add_to_chroma(chunks: list[Document], provider="OpenAI"):
         
         # Verify documents were added
         collection_size = len(db.get()['ids'])
-        st.info(f"Added {collection_size} documents to the {provider} collection.")
+        st.info(f"Added {collection_size} documents to the {collection_name} collection.")
         
     except Exception as e:
         st.error(f"Error adding documents to database: {str(e)}")
@@ -184,17 +208,26 @@ def calculate_chunk_ids(chunks):
 
     return chunks
 
+def get_data_path(provider, session_name):
+    return os.path.join("data", provider.lower(), session_name)
+
 def populate_database(files, provider="OpenAI"):
+    if not st.session_state.current_session:
+        st.error("Please select or create a session first!")
+        return
+        
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
     
-    if not os.path.exists(DATA_PATH):
-        os.makedirs(DATA_PATH)
+    # Use the new dynamic data path
+    data_path = get_data_path(provider, st.session_state.current_session)
+    if not os.path.exists(data_path):
+        os.makedirs(data_path)
     
     documents = []
 
     for uploaded_file in files:
-        file_path = os.path.join(DATA_PATH, uploaded_file.name)
+        file_path = os.path.join(data_path, uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
@@ -202,16 +235,22 @@ def populate_database(files, provider="OpenAI"):
         documents.extend(loader.load())
 
     chunks = split_documents(documents)
-
     add_to_chroma(chunks, provider)
     
-    st.success("Database populated successfully!")
-    
+    st.success(f"Database populated successfully! Documents saved in {data_path}")
+
 def get_reranked_documents(query: str, provider="OpenAI"):
     initial_results = get_similar_documents(query, provider);
     
-    return initial_results
+    # Sort by score (distance) - lowest distance first
+    sorted_results = sorted(initial_results, key=lambda x: x[1])
+    
+    # Print similarity scores for debugging
+    #for doc, score in sorted_results:
+        #st.write(f"Similarity score: {score:.4f} - {doc.page_content[:100]}...")
 
+    return sorted_results
+    
     """
     query_doc_pairs = [(query, doc.page_content) for doc, _ in initial_results]
     scores = reranker.predict(query_doc_pairs)
@@ -224,7 +263,11 @@ def get_reranked_documents(query: str, provider="OpenAI"):
     """
     
 def get_similar_documents(query: str, provider="OpenAI"):
-    collection_name = f"documents_{provider.lower()}"
+    if not st.session_state.current_session:
+        st.error("Please select or create a session first!")
+        return []
+        
+    collection_name = get_collection_name(provider, st.session_state.current_session)
     
     db = Chroma(
          persist_directory=CHROMA_PATH,
@@ -232,7 +275,8 @@ def get_similar_documents(query: str, provider="OpenAI"):
          collection_name=collection_name
     )
     
-    return db.similarity_search_with_score(query, k=10)
+    k = st.session_state.get('chroma_k', 10)
+    return db.similarity_search_with_score(query, k=k)
 
 def PG(prompt):
     base_url = "https://153.19.239.239/api/llm/prompt/chat"
@@ -240,6 +284,7 @@ def PG(prompt):
         "messages": [
             {"role": "user", "content": prompt}
         ],
+        "max_length": 2000,
         "temperature": 0.7
     }
 
@@ -254,8 +299,8 @@ def PG(prompt):
     )
     response.raise_for_status()
 
-    response_json = response.json()['response']
-    return response_json
+    response_json = response.json()
+    return response_json['response']
 
 def query_rag(query, provider="OpenAI", model="GPT-4o"):
     if not os.path.exists(CHROMA_PATH):
@@ -266,7 +311,8 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
     
     reranked_results = get_reranked_documents(query, provider)
 
-    top_results = reranked_results[:5]
+    k = st.session_state.get('rerank_k', 5)
+    top_results = reranked_results[:k]
 
     prompt_template = ChatPromptTemplate.from_template(
         """
@@ -316,6 +362,20 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
         response = PG(prompt_template_pl.format(context=context, question=query))
 
     return response, [doc.metadata for doc, _ in top_results]
+
+
+def pull_ollama_model(model_name):
+    try:
+        response = requests.post('http://ollama:11434/api/pull', json={'name': model_name})
+        if response.status_code != 200:
+            response = requests.post('http://localhost:11434/api/pull', json={'name': model_name})
+        
+        if response.status_code == 200:
+            return True, "Model pulled successfully!"
+        else:
+            return False, f"Failed to pull model: {response.text}"
+    except Exception as e:
+        return False, f"Error pulling model: {str(e)}"
 
 # Streamlit RAG
 st.title("RAG-powered Document Assistant")
@@ -371,14 +431,19 @@ def manage_sessions():
 def upload_files():
     st.header("Upload Documents")
 
-    uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
-    provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"]) 
-    
-    if st.button("Reset Database"):
-        clear_database(provider)
+    if not st.session_state.current_session:
+        st.warning("No active session. Please create or select a session in 'Manage Sessions'.")
+    else:
+        st.write(f"### Active Session: {st.session_state.current_session}")
+        
+        uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
+        provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"]) 
+        
+        if st.button("Reset Database"):
+            clear_database(provider)
 
-    if st.button("Populate Database") and uploaded_files:
-        populate_database(uploaded_files, provider)
+        if st.button("Populate Database") and uploaded_files:
+            populate_database(uploaded_files, provider)
 
 def query_database():
     st.header("Query")
@@ -386,24 +451,50 @@ def query_database():
     if not st.session_state.current_session:
         st.warning("No active session. Please create or select a session in 'Manage Sessions'.")
     else:
+        st.write(f"### Active Session: {st.session_state.current_session}")
+         
         session_name = st.session_state.current_session
 
         query_text = st.text_input("Enter your query:")
-        provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"])
+        
+        # Create columns for provider and model selection
+        col1, col2 = st.columns(2)
+        with col1:
+            provider = st.selectbox("Provider", ["OpenAI", "Ollama", "PG"])
+        with col2:
+            if provider == "OpenAI":
+                model = st.selectbox("Model", ["OpenAI GPT-4o"])
+            elif provider == "Ollama":
+                installed_models = get_installed_ollama_models()
+                if not installed_models:
+                    st.error("No Ollama models found. Please ensure Ollama is running and has models installed.")
+                    return
+                model = st.selectbox("Model", installed_models)
+            elif provider == "PG":
+                model = st.selectbox("Model", ["Bielik-11B-v2.2-Instruct model"])
 
-        if provider == "OpenAI":
-            model = st.selectbox("Model", ["OpenAI GPT-4o"])
-        elif provider == "Ollama":
-            installed_models = get_installed_ollama_models()
-            if not installed_models:
-                st.error("No Ollama models found. Please ensure Ollama is running and has models installed.")
-                return
-            model = st.selectbox("Model", installed_models)
-        elif provider == "PG":
-            model = st.selectbox("Model", ["Bielik-11B-v2.2-Instruct model"])
+        # Create columns for document retrieval settings
+        col3, col4 = st.columns(2)
+        with col3:
+            chroma_k = st.number_input(
+                "Documents retrieved from ChromaDB",
+                min_value=1,
+                max_value=20,
+                value=10
+            )
+        with col4:
+            rerank_k = st.number_input(
+                "Documents retrieved from reranking",
+                min_value=1,
+                max_value=chroma_k,
+                value=min(5, chroma_k)
+            )
 
         if st.button("Submit Query") and query_text:
             with st.spinner("Retrieving information..."):
+                # Update the function calls to use the new k values
+                st.session_state.chroma_k = chroma_k
+                st.session_state.rerank_k = rerank_k
                 response, sources = query_rag(query_text, provider, model)
             modelInfo = f"Provider: {provider}, Model: {model}"
             
@@ -432,5 +523,34 @@ def query_database():
         else:
             st.write("No chat history for this session.")
 
-pg = st.navigation([st.Page(manage_sessions, title="Manage sessions"), st.Page(upload_files, title="Upload files"), st.Page(query_database, title="Query")])
+def ollama_management():
+    st.header("Ollama Models Management")
+    
+    model_name = st.text_input("Enter model name to pull (e.g., llama3.1, mistral)")
+    
+    if st.button("Pull Model"):
+        if not model_name:
+            st.warning("Please enter a model name")
+        else:
+            with st.spinner(f"Pulling model {model_name}..."):
+                success, message = pull_ollama_model(model_name)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+    
+    st.subheader("Installed Models")
+    installed_models = get_installed_ollama_models()
+    if installed_models:
+        for model in installed_models:
+            st.write(f"- {model}")
+    else:
+        st.info("No models currently installed")
+
+pg = st.navigation([
+    st.Page(manage_sessions, title="Manage sessions"), 
+    st.Page(upload_files, title="Upload files"), 
+    st.Page(query_database, title="Query"),
+    st.Page(ollama_management, title="Ollama")
+])
 pg.run()
