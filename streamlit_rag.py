@@ -544,7 +544,7 @@ def query_database():
             st.write("Brak historii chatu dla tej sesji.")
 
 def ollama_management():
-    st.header("Ollama Models Management")
+    st.header("Zarządzanie modelami Ollama")
     
     model_name = st.text_input("Nazwa modelu do pobrania (np. llama3.1, mistral)")
     
