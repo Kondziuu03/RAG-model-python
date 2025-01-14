@@ -4,6 +4,7 @@ __pycache__/
 venv/
 backup/
 chroma/
+data/
 
 # Ignore environment files
 .env
@@ -13,4 +14,3 @@ chroma/
 
 # Ignore system files
 .DS_Store
-Thumbs.db

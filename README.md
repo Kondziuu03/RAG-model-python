@@ -1,43 +1,53 @@
-RAG console app
-## Installation
+# RAG app
 
-Use the [docker](https://www.docker.com/) to install RAG console application.
+# Installation
+
+Use the [docker](https://www.docker.com/) to install RAG.
+
+## RAG container
 
 Build RAG app image
 
 ```bash
-docker build -t rag-llm-app .
+docker build -t streamlit-app .
 ```
 
-Run builded image, replace /path/to/data with path to a folder where are stored documents you want to use in app
+Run builded image
 
 ```bash
-docker run -dit --network host -v /path/to/data:/app/data --name my-rag  rag-llm-app
+docker run -p 8501:8501 --env-file .env streamlit-app
+```
+## Ollama container
+
+Pull Ollama image
+
+```bash
+docker pull ollama/ollama
 ```
 
-Now you can run container bash and execute needed commands
+Run the Ollama container
 
 ```bash
-docker exec -it my-rag bash
+docker run -d --name my-ollama -p 11434:11434 ollama/ollama
 ```
 
-## Supported commands
+## Use docker compose instead
 
 
-Reset chromadb data
+Build image and start
 
 ```bash
-python populate_database.py --reset
+docker compose up --build
 ```
 
-Load data from your directory to chromadb
+Access the ollama container
 
 ```bash
-python populate_database.py
+docker compose exec ollama bash
 ```
-
-Search using imported data
+Pull needed LLM models
 
 ```bash
-python query_data "your_query"
+ollama pull llama3.1:latest
+ollama pull nomic-embed-text
 ```
