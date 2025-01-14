@@ -585,7 +585,6 @@ def settings_page():
     pg_username = st.text_input(
         "PG Bielik - Nazwa użytkownika",
         value=current_settings.get('pg_username', ''),
-        type="password"
     )
     
     pg_password = st.text_input(
