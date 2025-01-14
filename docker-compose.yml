@@ -4,8 +4,8 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./data:/app/data
-      - ./chroma:/app/chroma
+      - data:/app/data
+      - chroma:/app/chroma
     depends_on:
       - ollama
 
@@ -18,3 +18,5 @@ services:
 
 volumes:
   ollama:
+  data:
+  chroma:

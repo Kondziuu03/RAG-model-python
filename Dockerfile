@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN touch ./chat_history.sqlite3
+RUN mkdir ./data
+RUN touch ./data/chat_history.sqlite3
 
 # Expose the port Streamlit runs on
 EXPOSE 8501

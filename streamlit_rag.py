@@ -16,7 +16,7 @@ from langchain_ollama import OllamaEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
 
-DATABASE_PATH = "./chat_history.sqlite3"
+DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
 
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -373,7 +373,7 @@ def pull_ollama_model(model_name):
         response = requests.post(f"{settings['OLLAMA_URL']}/api/pull", json={'name': model_name})
         
         if response.status_code == 200:
-            return True, "Model pobrany prawidłowo!"
+            return True, f"Model {model_name} pobrany prawidłowo!"
         else:
             return False, f"Nie udało się pobrać modelu: {response.text}"
     except Exception as e:
@@ -540,7 +540,7 @@ def query_database():
 def ollama_management():
     st.header("Zarządzanie modelami Ollama")
     
-    model_name = st.text_input("Nazwa modelu do pobrania (np. llama3.1, mistral)")
+    model_name = st.text_input("Nazwa modelu do pobrania (np. llama3.1, SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M)")
     
     if st.button("Pobierz model"):
         if not model_name:
