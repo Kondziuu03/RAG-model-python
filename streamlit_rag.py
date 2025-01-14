@@ -16,17 +16,7 @@ from langchain_ollama import OllamaEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
 
-DATABASE_PATH = "chat_history.db"
-
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-auth = (os.getenv("LLM_USERNAME"), os.getenv("LLM_PASSWORD"))
-
-auth_kwargs = {
-    'auth': auth,
-    'verify': False, # Disable SSL verification
-}
-
+DATABASE_PATH = "./chat_history.sqlite3"
 CHROMA_PATH = "chroma"
 
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -100,13 +90,14 @@ def delete_session(session_name):
             st.warning(f"Could not delete collection for {provider}: {str(e)}")
 
 def get_embedding_function(provider):
+    settings = get_settings()
     if provider == "OpenAI":
         return OpenAIEmbeddings(model="text-embedding-ada-002", 
-                              openai_api_key=OPENAI_API_KEY)
+                              openai_api_key=settings['OPENAI_API_KEY'])
     elif provider == "Ollama":
-        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
+        return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
     elif provider == "PG":
-        return OllamaEmbeddings(model="nomic-embed-text", base_url="http://ollama:11434")
+        return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
 
 def clear_database(provider="OpenAI"):
     try:
@@ -275,11 +266,11 @@ def get_similar_documents(query: str, provider="OpenAI"):
 def get_settings():
     settings = load_settings()
     return {
-        'OPENAI_API_KEY': settings.get('openai_api_key', os.getenv("OPENAI_API_KEY")),
+        'OPENAI_API_KEY': settings.get('openai_api_key', ''),
         'OLLAMA_URL': settings.get('ollama_url', 'http://ollama:11434'),
         'PG_URL': settings.get('pg_url', 'https://153.19.239.239'),
-        'PG_USERNAME': settings.get('pg_username', os.getenv("LLM_USERNAME")),
-        'PG_PASSWORD': settings.get('pg_password', os.getenv("LLM_PASSWORD"))
+        'PG_USERNAME': settings.get('pg_username', ''),
+        'PG_PASSWORD': settings.get('pg_password', '')
     }
 
 def PG(prompt):
@@ -287,6 +278,11 @@ def PG(prompt):
     base_url = settings['PG_URL']
     api_endpoint = f"{base_url}/api/llm/prompt/chat"
     auth = (settings['PG_USERNAME'], settings['PG_PASSWORD'])
+
+    auth_kwargs = {
+        'auth': auth,
+        'verify': False, # Disable SSL verification
+    }
     data = {
         "messages": [
             {"role": "user", "content": prompt}
@@ -350,9 +346,9 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
 
     client = None
     response = None
+    settings = get_settings()
 
     if provider == "OpenAI":
-        settings = get_settings()
         client = OpenAI(api_key=settings['OPENAI_API_KEY'])
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -362,8 +358,6 @@ def query_rag(query, provider="OpenAI", model="GPT-4o"):
             ]
         ).choices[0].message.content
     elif provider == "Ollama":
-        res = requests.get(f"{settings['OLLAMA_URL']}/api/tags")
-        
         client = OllamaLLM(model=model, base_url=settings['OLLAMA_URL'])
         response = client.invoke(prompt)
     elif provider == "PG":
@@ -470,7 +464,7 @@ def upload_files():
                 populate_database(uploaded_files, provider)
 
 def query_database():
-    st.header("Chat")
+    st.header("Czat")
 
     if not st.session_state.current_session:
         st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
@@ -528,7 +522,7 @@ def query_database():
             
             save_chat_history()
 
-        st.subheader(f"Historia chatu dla sesji: {session_name}")
+        st.subheader(f"Historia czatu dla sesji: {session_name}")
         chat_history = st.session_state.chat_sessions[session_name]
         if chat_history:
             for idx, entry in enumerate(chat_history):
@@ -541,7 +535,7 @@ def query_database():
                     
                 st.markdown("---")
         else:
-            st.write("Brak historii chatu dla tej sesji.")
+            st.write("Brak historii czatu dla tej sesji.")
 
 def ollama_management():
     st.header("Zarządzanie modelami Ollama")
@@ -616,7 +610,7 @@ pg = st.navigation([
     st.Page(ollama_management, title="Ollama"),
     st.Page(manage_sessions, title="Sesje"), 
     st.Page(upload_files, title="Dokumenty"), 
-    st.Page(query_database, title="Chat"),
+    st.Page(query_database, title="Czat"),
 ])
 
 pg.run()

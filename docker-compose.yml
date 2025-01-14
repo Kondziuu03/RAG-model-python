@@ -10,7 +10,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./chroma:/app/chroma
-      - ./chat_history.db:/app/chat_history.db
     depends_on:
       - ollama
 
