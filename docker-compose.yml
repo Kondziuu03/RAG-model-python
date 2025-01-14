@@ -11,8 +11,6 @@ services:
       - ./data:/app/data
       - ./chroma:/app/chroma
       - ./chat_history.db:/app/chat_history.db
-    env_file:
-      - .env
     depends_on:
       - ollama
 
