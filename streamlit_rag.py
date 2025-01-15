@@ -13,6 +13,7 @@ from openai import OpenAI
 from langchain_ollama import OllamaLLM
 from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -97,7 +98,11 @@ def get_embedding_function(provider):
     elif provider == "Ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
     elif provider == "PG":
-        return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
+        return HuggingFaceEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
 
 def clear_database(provider):
     try:
@@ -121,9 +126,10 @@ def clear_database(provider):
 def split_documents(documents: list[Document]):
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
-        chunk_overlap=80,
+        chunk_overlap=100,
         length_function=len,
         is_separator_regex=False,
+        separators=["\n\n", "\n", ".", "!", "?", ";"]
     )
     return text_splitter.split_documents(documents)
 
@@ -217,7 +223,10 @@ def populate_database(files, provider):
     for uploaded_file in files:
         file_path = os.path.join(data_path, uploaded_file.name)
         with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+            content = uploaded_file.getvalue()
+            if isinstance(content, str):
+                content = content.encode('utf-8')
+            f.write(content)
         
         loader = PyPDFLoader(file_path)
         documents.extend(loader.load())
@@ -228,12 +237,14 @@ def populate_database(files, provider):
     st.success(f"Database populated successfully! Documents saved in {data_path}")
 
 def get_reranked_documents(query: str, provider):
-    initial_results = get_similar_documents(query, provider);
+    initial_results = get_similar_documents(query, provider)
     
-    sorted_results = sorted(initial_results, key=lambda x: x[1])
-    
-    #for doc, score in sorted_results:
-        #st.write(f"Similarity score: {score:.4f} - {doc.page_content[:100]}...")
+    # Sort based on provider - Ollama uses ascending (lower is better)
+    # while others use descending (higher is better)
+    if provider == "Ollama":
+        sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
+    else:
+        sorted_results = sorted(initial_results, key=lambda x: x[1], reverse=True)  # descending
 
     return sorted_results
     
@@ -278,7 +289,7 @@ def PG(prompt):
     base_url = settings['PG_URL']
     api_endpoint = f"{base_url}/api/llm/prompt/chat"
     auth = (settings['PG_USERNAME'], settings['PG_PASSWORD'])
-
+    
     auth_kwargs = {
         'auth': auth,
         'verify': False, # Disable SSL verification
@@ -288,7 +299,7 @@ def PG(prompt):
             {"role": "user", "content": prompt}
         ],
         "max_length": 2000,
-        "temperature": 0.7
+        "temperature": 0.5
     }
 
     response = requests.put(
@@ -309,13 +320,26 @@ def query_rag(query, provider, model):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
-    #results = db.similarity_search_with_score(query, k=5)
-    #results = sorted(results, key=lambda x: x[1], reverse=True)[:5]
-    
     reranked_results = get_reranked_documents(query, provider)
 
     k = st.session_state.get('rerank_k', 5)
     top_results = reranked_results[:k]
+
+    # Create enhanced metadata with text snippets and scores
+    enhanced_sources = []
+    for doc, score in top_results:
+        text_snippet = doc.page_content[:200]
+        text_snippet = text_snippet.replace('గ', 'j')
+        text_snippet = (text_snippet + "...").encode('utf-8', 'ignore').decode('utf-8')
+        
+        source_info = {
+            'id': doc.metadata.get('id', 'N/A'),
+            'page': doc.metadata.get('page', 'N/A'),
+            'source': doc.metadata.get('source', 'N/A'),
+            'similarity': f"{score:.4f}",
+            'text_snippet': text_snippet
+        }
+        enhanced_sources.append(source_info)
 
     prompt_template = ChatPromptTemplate.from_template(
         """
@@ -331,19 +355,22 @@ def query_rag(query, provider, model):
     
     prompt_template_pl = ChatPromptTemplate.from_template(
         """
+        Jesteś pomocnym asystentem specjalizującym się w analizie dokumentów w języku polskim.
         Użyj poniższych informacji, aby odpowiedzieć na pytanie użytkownika.
         Jeśli nie znasz odpowiedzi, po prostu powiedz, że nie wiesz, nie próbuj wymyślać odpowiedzi.
 
         Kontekst: {context}
         Pytanie: {question}
 
-        Podaj prawidłową odpowiedź wraz z krótkim wyjaśnieniem.
+        Podaj prawidłową odpowiedź wraz z krótkim wyjaśnieniem. 
+        Używaj poprawnej polskiej gramatyki i interpunkcji.
+        Jeśli cytujesz fragment tekstu, oznacz go cudzysłowem.
         """
     )
 
-    context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
+    context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results]).encode('utf-8', errors='replace').decode('utf-8')
     prompt = prompt_template.format(context=context, question=query)
-
+    
     client = None
     response = None
     settings = get_settings()
@@ -363,7 +390,7 @@ def query_rag(query, provider, model):
     elif provider == "PG":
         response = PG(prompt_template_pl.format(context=context, question=query))
 
-    return response, [doc.metadata for doc, _ in top_results]
+    return response, enhanced_sources
 
 
 def pull_ollama_model(model_name):
@@ -525,14 +552,22 @@ def query_database():
         st.subheader(f"Historia czatu dla sesji: {session_name}")
         chat_history = st.session_state.chat_sessions[session_name]
         if chat_history:
-            for idx, entry in enumerate(chat_history):
-                st.write(f"**Q{idx+1}:** {entry['query']}")
-                st.write(f"**A{idx+1} ({entry['model']}):** {entry['response']}")
+            for idx, entry in enumerate(reversed(chat_history)):
+                real_idx = len(chat_history) - idx  # Calculate the real index for display
+                st.write(f"**Q{real_idx}:** {entry['query']}")
+                st.write(f"**A{real_idx} ({entry['model']}):** {entry['response']}")
                 
-                with st.expander(f"Źródła #{idx+1}"):
-                    for source in entry['sources']:
-                        st.write(source)
-                    
+                with st.expander(f"Źródła #{real_idx}"):
+                    if entry.get('sources') and isinstance(entry['sources'], list):
+                        for source in entry['sources']:
+                            st.write("---")
+                            st.write(f"📄 **ID:** {source.get('id', 'N/A')}")
+                            st.write(f"📑 **Strona:** {source.get('page', 'N/A')}")
+                            st.write(f"📁 **Źródło:** {source.get('source', 'N/A')}")
+                            st.write(f"🎯 **Podobieństwo:** {source.get('similarity', 'N/A')}")
+                            st.write(f"📝 **Fragment tekstu:** {source.get('text_snippet', 'N/A')}")
+                    else:
+                        st.write("Brak źródeł dla tej odpowiedzi.")
                 st.markdown("---")
         else:
             st.write("Brak historii czatu dla tej sesji.")
@@ -593,7 +628,7 @@ def settings_page():
         type="password"
     )
     
-    if st.button("Zapisz Ustawenia"):
+    if st.button("Zapisz Ustawienia"):
         settings = {
             'openai_api_key': openai_key,
             'ollama_url': ollama_url,

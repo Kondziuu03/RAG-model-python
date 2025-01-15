@@ -10,3 +10,5 @@ streamlit
 openai
 langchain_openai
 python-dotenv
+transformers
+langchain_huggingface
