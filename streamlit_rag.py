@@ -76,7 +76,7 @@ def delete_session(session_name):
     conn.commit()
     conn.close()
 
-    providers = ["OpenAI", "Ollama", "PG"]
+    providers = ["PG", "Ollama", "OpenAI"]
     for provider in providers:
         try:
             collection_name = get_collection_name(provider, session_name)
@@ -99,7 +99,7 @@ def get_embedding_function(provider):
     elif provider == "PG":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
 
-def clear_database(provider="OpenAI"):
+def clear_database(provider):
     try:
         if not st.session_state.current_session:
             st.error("Please select or create a session first!")
@@ -145,7 +145,7 @@ def get_installed_ollama_models():
 def get_collection_name(provider, session_name):
     return f"documents_{provider.lower()}_{session_name}"
 
-def add_to_chroma(chunks: list[Document], provider="OpenAI"):
+def add_to_chroma(chunks: list[Document], provider):
     try:
         if not chunks:
             st.warning("No documents to add to the database.")
@@ -200,7 +200,7 @@ def calculate_chunk_ids(chunks):
 def get_data_path(provider, session_name):
     return os.path.join("data", provider.lower(), session_name)
 
-def populate_database(files, provider="OpenAI"):
+def populate_database(files, provider):
     if not st.session_state.current_session:
         st.error("Please select or create a session first!")
         return
@@ -227,7 +227,7 @@ def populate_database(files, provider="OpenAI"):
     
     st.success(f"Database populated successfully! Documents saved in {data_path}")
 
-def get_reranked_documents(query: str, provider="OpenAI"):
+def get_reranked_documents(query: str, provider):
     initial_results = get_similar_documents(query, provider);
     
     sorted_results = sorted(initial_results, key=lambda x: x[1])
@@ -247,7 +247,7 @@ def get_reranked_documents(query: str, provider="OpenAI"):
     return [(doc, score) for doc, score in reranked_results]
     """
     
-def get_similar_documents(query: str, provider="OpenAI"):
+def get_similar_documents(query: str, provider):
     if not st.session_state.current_session:
         st.error("Please select or create a session first!")
         return []
@@ -305,7 +305,7 @@ def PG(prompt):
     response_json = response.json()
     return response_json['response']
 
-def query_rag(query, provider="OpenAI", model="GPT-4o"):
+def query_rag(query, provider, model):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
@@ -454,7 +454,7 @@ def upload_files():
         st.write(f"### Aktywna sesja: {st.session_state.current_session}")
         
         uploaded_files = st.file_uploader("Prześlij pliki PDF", type="pdf", accept_multiple_files=True, help="Maksymalny rozmiar pliku: 200MB")
-        provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"]) 
+        provider = st.selectbox("Dostawca", ["PG", "Ollama", "OpenAI"]) 
         
         if st.button("Resetuj bazę dokumentów"):
             clear_database(provider)
@@ -477,7 +477,7 @@ def query_database():
         
         col1, col2 = st.columns(2)
         with col1:
-            provider = st.selectbox("Dostawca", ["OpenAI", "Ollama", "PG"])
+            provider = st.selectbox("Dostawca", [ "PG", "Ollama", "OpenAI"])
         with col2:
             if provider == "OpenAI":
                 model = st.selectbox("Model", ["OpenAI GPT-4o"])
