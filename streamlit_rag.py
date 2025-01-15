@@ -488,7 +488,7 @@ def query_database():
                     return
                 model = st.selectbox("Model", installed_models)
             elif provider == "PG":
-                model = st.selectbox("Model", ["Bielik-11B-v2.2-Instruct model"])
+                model = st.selectbox("Model", ["speakleash/Bielik-11B-v2.2-Instruct"])
 
         col3, col4 = st.columns(2)
         with col3:
