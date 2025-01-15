@@ -290,6 +290,8 @@ def PG(prompt):
     api_endpoint = f"{base_url}/api/llm/prompt/chat"
     auth = (settings['PG_USERNAME'], settings['PG_PASSWORD'])
     
+    st.write(prompt)
+    
     auth_kwargs = {
         'auth': auth,
         'verify': False, # Disable SSL verification
@@ -328,9 +330,7 @@ def query_rag(query, provider, model):
     # Create enhanced metadata with text snippets and scores
     enhanced_sources = []
     for doc, score in top_results:
-        text_snippet = doc.page_content[:200]
-        text_snippet = text_snippet.replace('గ', 'j')
-        text_snippet = (text_snippet + "...").encode('utf-8', 'ignore').decode('utf-8')
+        text_snippet = doc.page_content[:200] + "..."
         
         source_info = {
             'id': doc.metadata.get('id', 'N/A'),
@@ -346,8 +346,10 @@ def query_rag(query, provider, model):
         Use the following pieces of information to answer the user's question.
         If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
-        Context: {context}
-        Question: {question}
+        Context: {context}\n
+        ---------------------------
+        Question: {question}\n
+        ---------------------------
 
         Provide a right answer with a short explanation.
         """
@@ -368,7 +370,7 @@ def query_rag(query, provider, model):
         """
     )
 
-    context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results]).encode('utf-8', errors='replace').decode('utf-8')
+    context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
     
     client = None
