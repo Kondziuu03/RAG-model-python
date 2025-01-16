@@ -129,7 +129,6 @@ def split_documents(documents: list[Document]):
         chunk_overlap=100,
         length_function=len,
         is_separator_regex=False,
-        separators=["\n\n", "\n", ".", "!", "?", ";"]
     )
     return text_splitter.split_documents(documents)
 
@@ -223,10 +222,11 @@ def populate_database(files, provider):
     for uploaded_file in files:
         file_path = os.path.join(data_path, uploaded_file.name)
         with open(file_path, "wb") as f:
-            content = uploaded_file.getvalue()
-            if isinstance(content, str):
-                content = content.encode('utf-8')
-            f.write(content)
+            f.write(uploaded_file.getbuffer())
+            # content = uploaded_file.getvalue()
+            # if isinstance(content, str):
+            #     content = content.encode('utf-8')
+            # f.write(content)
         
         loader = PyPDFLoader(file_path)
         documents.extend(loader.load())
@@ -241,10 +241,10 @@ def get_reranked_documents(query: str, provider):
     
     # Sort based on provider - Ollama uses ascending (lower is better)
     # while others use descending (higher is better)
-    if provider == "Ollama":
-        sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
-    else:
-        sorted_results = sorted(initial_results, key=lambda x: x[1], reverse=True)  # descending
+    #if provider == "Ollama":
+    #    sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
+    #else:
+    sorted_results = sorted(initial_results, key=lambda x: x[1], reverse=True)  # descending
 
     return sorted_results
     
@@ -290,8 +290,6 @@ def PG(prompt):
     api_endpoint = f"{base_url}/api/llm/prompt/chat"
     auth = (settings['PG_USERNAME'], settings['PG_PASSWORD'])
     
-    st.write(prompt)
-    
     auth_kwargs = {
         'auth': auth,
         'verify': False, # Disable SSL verification
@@ -330,7 +328,7 @@ def query_rag(query, provider, model):
     # Create enhanced metadata with text snippets and scores
     enhanced_sources = []
     for doc, score in top_results:
-        text_snippet = doc.page_content[:200] + "..."
+        text_snippet = doc.page_content[:300] + "..."
         
         source_info = {
             'id': doc.metadata.get('id', 'N/A'),
@@ -372,6 +370,7 @@ def query_rag(query, provider, model):
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
+    prompt_pl = prompt_template_pl.format(context=context, question=query)
     
     client = None
     response = None
@@ -388,9 +387,9 @@ def query_rag(query, provider, model):
         ).choices[0].message.content
     elif provider == "Ollama":
         client = OllamaLLM(model=model, base_url=settings['OLLAMA_URL'])
-        response = client.invoke(prompt)
+        response = client.invoke(prompt_pl if "bielik" in model.lower() else prompt)
     elif provider == "PG":
-        response = PG(prompt_template_pl.format(context=context, question=query))
+        response = PG(prompt_pl)
 
     return response, enhanced_sources
 
@@ -536,7 +535,7 @@ def query_database():
             )
 
         if st.button("Wyślij") and query_text:
-            with st.spinner("Pobieranie informacji..."):
+            with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
                 response, sources = query_rag(query_text, provider, model)
