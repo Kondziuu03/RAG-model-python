@@ -271,7 +271,7 @@ def get_similar_documents(query: str, provider):
          collection_name=collection_name
     )
     
-    k = st.session_state.get('chroma_k', 10)
+    k = st.session_state.get('chroma_k', 20)
     return db.similarity_search_with_score(query, k=k)
 
 def get_settings():
@@ -322,7 +322,7 @@ def query_rag(query, provider, model):
         
     reranked_results = get_reranked_documents(query, provider)
 
-    k = st.session_state.get('rerank_k', 5)
+    k = st.session_state.get('rerank_k', 10)
     top_results = reranked_results[:k]
 
     # Create enhanced metadata with text snippets and scores
@@ -523,15 +523,15 @@ def query_database():
             chroma_k = st.number_input(
                 "Dokumenty pobrane z ChromaDB",
                 min_value=1,
-                max_value=20,
-                value=10
+                max_value=30,
+                value=20
             )
         with col4:
             rerank_k = st.number_input(
                 "Dokumenty pobrane z rerankingu",
                 min_value=1,
                 max_value=chroma_k,
-                value=min(5, chroma_k)
+                value=min(10, chroma_k)
             )
 
         if st.button("Wyślij") and query_text:
