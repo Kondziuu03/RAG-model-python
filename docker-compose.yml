@@ -1,11 +1,13 @@
 services:
   streamlit:
+    # build: .
     image: registry.gitlab.com/kondziuu03/rag-llm
     ports:
       - "8501:8501"
     volumes:
       - data:/app/data
       - chroma:/app/chroma
+      - ~/.cache/huggingface:/root/.cache/huggingface
     depends_on:
       - ollama
 
@@ -20,3 +22,4 @@ volumes:
   ollama:
   data:
   chroma:
+  hugs_cache:
