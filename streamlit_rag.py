@@ -84,7 +84,8 @@ def delete_session(session_name):
             db = Chroma(
                 persist_directory=CHROMA_PATH,
                 embedding_function=get_embedding_function(provider),
-                collection_name=collection_name
+                collection_name=collection_name,
+                collection_metadata={"hnsw:space": "cosine"}
             )
             db.delete_collection()
         except Exception as e:
@@ -115,7 +116,8 @@ def clear_database(provider):
         db = Chroma(
             persist_directory=CHROMA_PATH,
             embedding_function=get_embedding_function(provider),
-            collection_name=collection_name
+            collection_name=collection_name,
+            collection_metadata={"hnsw:space": "cosine"}
         )
         db.delete_collection()
         
@@ -166,7 +168,8 @@ def add_to_chroma(chunks: list[Document], provider):
         db = Chroma(
             persist_directory=CHROMA_PATH, 
             embedding_function=embedding_function,
-            collection_name=collection_name
+            collection_name=collection_name,
+            collection_metadata={"hnsw:space": "cosine"}
         )
 
         chunks_with_ids = calculate_chunk_ids(chunks)
@@ -244,7 +247,7 @@ def get_reranked_documents(query: str, provider):
     #if provider == "Ollama":
     #    sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
     #else:
-    sorted_results = sorted(initial_results, key=lambda x: x[1], reverse=True)  # descending
+    sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
 
     return sorted_results
     
@@ -268,7 +271,8 @@ def get_similar_documents(query: str, provider):
     db = Chroma(
          persist_directory=CHROMA_PATH,
          embedding_function=get_embedding_function(provider),
-         collection_name=collection_name
+         collection_name=collection_name,
+         collection_metadata={"hnsw:space": "cosine"}
     )
     
     k = st.session_state.get('chroma_k', 20)
@@ -334,7 +338,7 @@ def query_rag(query, provider, model):
             'id': doc.metadata.get('id', 'N/A'),
             'page': doc.metadata.get('page', 'N/A'),
             'source': doc.metadata.get('source', 'N/A'),
-            'similarity': f"{score:.4f}",
+            'score': f"{score:.4f}",
             'text_snippet': text_snippet
         }
         enhanced_sources.append(source_info)
@@ -565,7 +569,7 @@ def query_database():
                             st.write(f"📄 **ID:** {source.get('id', 'N/A')}")
                             st.write(f"📑 **Strona:** {source.get('page', 'N/A')}")
                             st.write(f"📁 **Źródło:** {source.get('source', 'N/A')}")
-                            st.write(f"🎯 **Podobieństwo:** {source.get('similarity', 'N/A')}")
+                            st.write(f"🎯 **Scoring:** {source.get('score', 'N/A')}")
                             st.write(f"📝 **Fragment tekstu:** {source.get('text_snippet', 'N/A')}")
                     else:
                         st.write("Brak źródeł dla tej odpowiedzi.")
