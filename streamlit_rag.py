@@ -453,6 +453,7 @@ def manage_sessions():
         session_selector = st.selectbox("Wybierz sesję", st.session_state.chat_sessions.keys())
         if st.button("Przełącz na wybraną sesję"):
             st.session_state.current_session = session_selector
+            update_loaded()
             st.success(f"Przełączono na sesję '{session_selector}'!")
 
     if st.session_state.chat_sessions:
@@ -477,6 +478,19 @@ def manage_sessions():
     if st.session_state.current_session:
         save_chat_history()
 
+def update_loaded():
+    providers = ["PG", "Ollama", "OpenAI"]
+    for provider in providers:
+        collection_name = get_collection_name(provider, st.session_state.current_session)
+        db = Chroma(
+            persist_directory=CHROMA_PATH,
+            embedding_function=get_embedding_function(provider),
+            collection_name=collection_name,
+            collection_metadata={"hnsw:space": "cosine"}
+        )
+        if len(db.get()['ids']) > 0:
+            st.session_state.loaded[provider] = True
+
 def upload_files():
     st.header("Dokumenty")
 
@@ -494,6 +508,8 @@ def upload_files():
         if st.button("Załaduj wybrane dokumenty") and uploaded_files:
             with st.spinner("Przetwarzanie dokumentów..."):
                 populate_database(uploaded_files, provider)
+
+                update_loaded()
 
 def query_database():
     st.header("Czat")
@@ -538,7 +554,10 @@ def query_database():
                 value=min(10, chroma_k)
             )
 
-        if st.button("Wyślij") and query_text:
+        if not st.session_state.loaded[provider]:
+             st.write("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
+
+        if st.session_state.loaded[provider] and st.button("Wyślij") and query_text:
             with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
@@ -653,3 +672,5 @@ pg = st.navigation([
 ])
 
 pg.run()
+if st.session_state.get('loaded') is None:
+    st.session_state.loaded = {"PG": False, "Ollama": False, "OpenAI": False}
