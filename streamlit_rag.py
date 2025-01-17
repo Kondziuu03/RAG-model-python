@@ -20,6 +20,8 @@ from langchain_community.document_loaders import PyPDFLoader
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
 
+PROVIDERS = ["PG", "Ollama", "OpenAI"]
+
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 #reranker = CrossEncoder(RERANKER_MODEL)
 
@@ -77,8 +79,7 @@ def delete_session(session_name):
     conn.commit()
     conn.close()
 
-    providers = ["PG", "Ollama", "OpenAI"]
-    for provider in providers:
+    for provider in PROVIDERS:
         try:
             collection_name = get_collection_name(provider, session_name)
             db = Chroma(
@@ -476,8 +477,7 @@ def manage_sessions():
         save_chat_history()
 
 def update_loaded():
-    providers = ["PG", "Ollama", "OpenAI"]
-    for provider in providers:
+    for provider in PROVIDERS:
         collection_name = get_collection_name(provider, st.session_state.current_session)
         db = Chroma(
             persist_directory=CHROMA_PATH,
