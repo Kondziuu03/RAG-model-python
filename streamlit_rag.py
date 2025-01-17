@@ -320,7 +320,7 @@ def PG(prompt):
     response_json = response.json()
     return response_json['response']
 
-def query_rag(query, provider, model):
+def query_rag(query, provider, model, lang):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
@@ -345,20 +345,6 @@ def query_rag(query, provider, model):
 
     prompt_template = ChatPromptTemplate.from_template(
         """
-        Use the following pieces of information to answer the user's question.
-        If you don't know the answer, just say that you don't know, don't try to make up an answer.
-
-        Context: {context}\n
-        ---------------------------
-        Question: {question}\n
-        ---------------------------
-
-        Provide a right answer with a short explanation.
-        """
-    )
-    
-    prompt_template_pl = ChatPromptTemplate.from_template(
-        """
         Jesteś pomocnym asystentem specjalizującym się w analizie dokumentów w języku polskim.
         Użyj poniższych informacji, aby odpowiedzieć na pytanie użytkownika.
         Jeśli nie znasz odpowiedzi, po prostu powiedz, że nie wiesz, nie próbuj wymyślać odpowiedzi.
@@ -370,11 +356,22 @@ def query_rag(query, provider, model):
         Używaj poprawnej polskiej gramatyki i interpunkcji.
         Jeśli cytujesz fragment tekstu, oznacz go cudzysłowem.
         """
+    ) if lang == "Polski" else ChatPromptTemplate.from_template(
+        """
+        Use the following pieces of information to answer the user's question.
+        If you don't know the answer, just say that you don't know, don't try to make up an answer.
+
+        Context: {context}\n
+        ---------------------------
+        Question: {question}\n
+        ---------------------------
+
+        Provide a right answer with a short explanation.
+        """
     )
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
-    prompt_pl = prompt_template_pl.format(context=context, question=query)
     
     client = None
     response = None
@@ -391,9 +388,9 @@ def query_rag(query, provider, model):
         ).choices[0].message.content
     elif provider == "Ollama":
         client = OllamaLLM(model=model, base_url=settings['OLLAMA_URL'])
-        response = client.invoke(prompt_pl if "bielik" in model.lower() else prompt)
+        response = client.invoke(prompt)
     elif provider == "PG":
-        response = PG(prompt_pl)
+        response = PG(prompt)
 
     return response, enhanced_sources
 
@@ -554,6 +551,8 @@ def query_database():
                 value=min(10, chroma_k)
             )
 
+        lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
+
         if not st.session_state.loaded[provider]:
              st.write("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
 
@@ -561,7 +560,7 @@ def query_database():
             with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
-                response, sources = query_rag(query_text, provider, model)
+                response, sources = query_rag(query_text, provider, model, lang)
             modelInfo = f"Dostawca: {provider}, Model: {model}"
             
             st.session_state.chat_sessions[session_name].append({
