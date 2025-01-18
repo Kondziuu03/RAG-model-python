@@ -16,15 +16,19 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
-from torch import cuda
 
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
 
-PROVIDERS = ["PG", "Ollama", "OpenAI"]
-
 #RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 #reranker = CrossEncoder(RERANKER_MODEL)
+
+def get_available_providers():
+    settings = get_settings()
+    providers = ["PG", "Ollama"]
+    if settings.get('openai_api_key'):
+        providers.append("OpenAI")
+    return providers
 
 def init_db():
     conn = sqlite3.connect(DATABASE_PATH)
@@ -67,18 +71,11 @@ def load_chat_history():
         chat_sessions[session_name].append({
             "query": query,
             "response": response,
-            "sources": json.loads(sources) if sources else None,
+            "sources": json.loads(sources),
             "model": model
         })
     conn.close()
     return chat_sessions
-
-def delete_chat_history(session_name):
-    conn = sqlite3.connect(DATABASE_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE chat_sessions SET query = NULL, response = NULL, sources = NULL WHERE session_name = ?", (session_name,))
-    conn.commit()
-    conn.close()
 
 def delete_session(session_name):
     conn = sqlite3.connect(DATABASE_PATH)
@@ -87,7 +84,7 @@ def delete_session(session_name):
     conn.commit()
     conn.close()
 
-    for provider in PROVIDERS:
+    for provider in get_available_providers():
         try:
             collection_name = get_collection_name(provider, session_name)
             db = Chroma(
@@ -103,14 +100,17 @@ def delete_session(session_name):
 def get_embedding_function(provider):
     settings = get_settings()
     if provider == "OpenAI":
+        api_key = settings['OPENAI_API_KEY']
+        if not api_key:
+            raise ValueError("OpenAI API key not configured. Please set it in Settings.")
         return OpenAIEmbeddings(model="text-embedding-ada-002", 
-                              openai_api_key=settings['OPENAI_API_KEY'])
+                              openai_api_key=api_key)
     elif provider == "Ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=settings['OLLAMA_URL'])
     elif provider == "PG":
         return HuggingFaceEmbeddings(
             model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-            model_kwargs={'device': 'cuda' if cuda.is_available() else 'cpu'},
+            model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
 
@@ -120,19 +120,42 @@ def clear_database(provider):
             st.error("Please select or create a session first!")
             return
             
-        collection_name = get_collection_name(provider, st.session_state.current_session)
-
-        db = Chroma(
-            persist_directory=CHROMA_PATH,
-            embedding_function=get_embedding_function(provider),
-            collection_name=collection_name,
-            collection_metadata={"hnsw:space": "cosine"}
-        )
-        db.delete_collection()
+        available_docs = get_available_collections(provider, st.session_state.current_session)
         
-        st.success(f"Successfully cleared {collection_name} collection!")
+        # Delete base collection first
+        base_collection_name = get_collection_name(provider, st.session_state.current_session)
+        try:
+            db = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embedding_function(provider),
+                collection_name=base_collection_name,
+                collection_metadata={"hnsw:space": "cosine"}
+            )
+            db.delete_collection()
+        except Exception as e:
+            st.warning(f"Could not delete base collection {base_collection_name}: {str(e)}")
+            
+        # Delete document-specific collections
+        if available_docs:
+            for doc_name in available_docs:
+                collection_name = get_collection_name(provider, st.session_state.current_session, doc_name)
+                try:
+                    db = Chroma(
+                        persist_directory=CHROMA_PATH,
+                        embedding_function=get_embedding_function(provider),
+                        collection_name=collection_name,
+                        collection_metadata={"hnsw:space": "cosine"}
+                    )
+                    db.delete_collection()
+                except Exception as e:
+                    st.warning(f"Could not delete collection {collection_name}: {str(e)}")
+        
+        # Reset the loaded state for this provider
+        st.session_state.loaded[provider] = False
+        
+        st.success(f"Successfully cleared all documents for {provider}!")
     except Exception as e:
-        st.error(f"Error clearing collection: {str(e)}")
+        st.error(f"Error clearing collections: {str(e)}")
 
 def split_documents(documents: list[Document]):
     text_splitter = RecursiveCharacterTextSplitter(
@@ -158,10 +181,33 @@ def get_installed_ollama_models():
        
     return []
 
-def get_collection_name(provider, session_name):
-    return f"documents_{provider.lower()}_{session_name}"
+def get_collection_name(provider, session_name, document_name=None):
+    # Clean the session name first
+    clean_session = ''.join(c if c.isalnum() else '_' for c in session_name)
+    clean_session = clean_session.strip('_')
+    
+    base_name = f"docs_{provider.lower()}_{clean_session}"
+    
+    if not document_name or not document_name.strip():
+        return base_name
+        
+    clean_name = os.path.splitext(document_name)[0]
+    clean_name = ''.join(c if c.isalnum() else '_' for c in clean_name)
+    clean_name = clean_name.strip('_')
+    
+    full_name = f"{base_name}_{clean_name}"
+    
+    # Ensure the name meets Chroma's requirements
+    if len(full_name) > 63:
+        full_name = full_name[:63]
+    if not full_name[0].isalnum():
+        full_name = 'c' + full_name[1:]
+    if not full_name[-1].isalnum():
+        full_name = full_name[:-1] + 'c'
+        
+    return full_name
 
-def add_to_chroma(chunks: list[Document], provider):
+def add_to_chroma(chunks: list[Document], provider, document_name=None):
     try:
         if not chunks:
             st.warning("No documents to add to the database.")
@@ -172,7 +218,7 @@ def add_to_chroma(chunks: list[Document], provider):
             return
         
         embedding_function = get_embedding_function(provider)
-        collection_name = get_collection_name(provider, st.session_state.current_session)
+        collection_name = get_collection_name(provider, st.session_state.current_session, document_name)
         
         db = Chroma(
             persist_directory=CHROMA_PATH, 
@@ -229,35 +275,23 @@ def populate_database(files, provider):
     if not os.path.exists(data_path):
         os.makedirs(data_path)
     
-    documents = []
-
+    
     for uploaded_file in files:
+        documents = []
+
         file_path = os.path.join(data_path, uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-            # content = uploaded_file.getvalue()
-            # if isinstance(content, str):
-            #     content = content.encode('utf-8')
-            # f.write(content)
         
         loader = PyPDFLoader(file_path)
         documents.extend(loader.load())
 
-    chunks = split_documents(documents)
-    add_to_chroma(chunks, provider)
-    
-    st.success(f"Database populated successfully! Documents saved in {data_path}")
+        chunks = split_documents(documents)
+        add_to_chroma(chunks, provider, uploaded_file.name)
 
-def get_reranked_documents(query: str, provider):
-    initial_results = get_similar_documents(query, provider)
-    
-    # Sort based on provider - Ollama uses ascending (lower is better)
-    # while others use descending (higher is better)
-    #if provider == "Ollama":
-    #    sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
-    #else:
+def get_reranked_documents(query: str, provider, selected_docs=None):
+    initial_results = get_similar_documents(query, provider, selected_docs)
     sorted_results = sorted(initial_results, key=lambda x: x[1])  # ascending
-
     return sorted_results
     
     """
@@ -270,22 +304,31 @@ def get_reranked_documents(query: str, provider):
     return [(doc, score) for doc, score in reranked_results]
     """
     
-def get_similar_documents(query: str, provider):
+def get_similar_documents(query: str, provider, selected_docs=None):
     if not st.session_state.current_session:
         st.error("Please select or create a session first!")
         return []
-        
-    collection_name = get_collection_name(provider, st.session_state.current_session)
     
-    db = Chroma(
-         persist_directory=CHROMA_PATH,
-         embedding_function=get_embedding_function(provider),
-         collection_name=collection_name,
-         collection_metadata={"hnsw:space": "cosine"}
-    )
-    
+    all_results = []
     k = st.session_state.get('chroma_k', 20)
-    return db.similarity_search_with_score(query, k=k)
+    
+    collection_name = get_collection_name(provider, st.session_state.current_session, selected_docs)
+    
+    try:
+        db = Chroma(
+            persist_directory=CHROMA_PATH,
+            embedding_function=get_embedding_function(provider),
+            collection_name=collection_name,
+            collection_metadata={"hnsw:space": "cosine"}
+        )
+        
+        results = db.similarity_search_with_score(query, k=k)
+        all_results.extend(results)
+    except Exception as e:
+        st.warning(f"Nie można przeszukać kolekcji {collection_name}: {str(e)}")
+    
+    # Sort all results by score
+    return sorted(all_results, key=lambda x: x[1])[:k]
 
 def get_settings():
     settings = load_settings()
@@ -329,11 +372,11 @@ def PG(prompt):
     response_json = response.json()
     return response_json['response']
 
-def query_rag(query, provider, model, lang):
+def query_rag(query, provider, model, lang, selected_docs=None):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
-    reranked_results = get_reranked_documents(query, provider)
+    reranked_results = get_reranked_documents(query, provider, selected_docs)
 
     k = st.session_state.get('rerank_k', 10)
     top_results = reranked_results[:k]
@@ -387,6 +430,8 @@ def query_rag(query, provider, model, lang):
     settings = get_settings()
 
     if provider == "OpenAI":
+        if not settings['OPENAI_API_KEY']:
+            raise ValueError("OpenAI API key not configured. Please set it in Settings.")
         client = OpenAI(api_key=settings['OPENAI_API_KEY'])
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -434,6 +479,45 @@ def load_settings():
     conn.close()
     return settings
 
+def get_available_collections(provider, session_name):
+    if not os.path.exists(CHROMA_PATH):
+        return []
+    
+    base_prefix = f"docs_{provider.lower()}_{session_name}"
+    collections = []
+    
+    embedding_function = get_embedding_function(provider)
+
+    client = Chroma(
+        persist_directory=CHROMA_PATH,
+        embedding_function=embedding_function,
+        collection_name="temp",
+        collection_metadata={"hnsw:space": "cosine"}
+    )._client
+    
+    all_collections = client.list_collections()
+    
+    for collection in all_collections:
+        if collection.name.startswith(base_prefix):
+            doc_name = collection.name[len(base_prefix):]
+            if doc_name.startswith('_'):
+                doc_name = doc_name[1:]
+            
+            # Check if collection has documents
+            try:
+                db = Chroma(
+                    persist_directory=CHROMA_PATH,
+                    embedding_function=embedding_function,
+                    collection_name=collection.name,
+                    collection_metadata={"hnsw:space": "cosine"}
+                )
+                if len(db.get()['ids']) > 0:  # Only add if collection has documents
+                    collections.append(doc_name)
+            except Exception as e:
+                st.warning(f"Could not check collection {collection.name}: {str(e)}")
+    
+    return collections
+
 st.title("RAG - przeszukiwanie dokumentów")
 
 if "chat_sessions" not in st.session_state:
@@ -449,6 +533,7 @@ def manage_sessions():
         if new_session_name and new_session_name not in st.session_state.chat_sessions:
             st.session_state.chat_sessions[new_session_name] = []
             st.session_state.current_session = new_session_name
+            update_loaded()
             st.success(f"Sesja '{new_session_name}' utworzona i aktywowana!")
         elif new_session_name in st.session_state.chat_sessions:
             st.warning("Sesja już istnieje!")
@@ -485,19 +570,45 @@ def manage_sessions():
         save_chat_history()
 
 def update_loaded():
-    for provider in PROVIDERS:
-        collection_name = get_collection_name(provider, st.session_state.current_session)
-        db = Chroma(
-            persist_directory=CHROMA_PATH,
-            embedding_function=get_embedding_function(provider),
-            collection_name=collection_name,
-            collection_metadata={"hnsw:space": "cosine"}
-        )
-        if len(db.get()['ids']) > 0:
-            st.session_state.loaded[provider] = True
+    for provider in get_available_providers():
+        # Get all collections for this provider
+        available_docs = get_available_collections(provider, st.session_state.current_session)
+        has_documents = False
+        
+        try:
+            base_collection_name = get_collection_name(provider, st.session_state.current_session)
+            db = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embedding_function(provider),
+                collection_name=base_collection_name,
+                collection_metadata={"hnsw:space": "cosine"}
+            )
+            if len(db.get()['ids']) > 0:
+                has_documents = True
+        except:
+            pass
+            
+        if not has_documents and available_docs:
+            for doc_name in available_docs:
+                try:
+                    collection_name = get_collection_name(provider, st.session_state.current_session, doc_name)
+                    db = Chroma(
+                        persist_directory=CHROMA_PATH,
+                        embedding_function=get_embedding_function(provider),
+                        collection_name=collection_name,
+                        collection_metadata={"hnsw:space": "cosine"}
+                    )
+                    if len(db.get()['ids']) > 0:
+                        has_documents = True
+                        break
+                except:
+                    continue
+        
+        st.session_state.loaded[provider] = has_documents
 
 def upload_files():
     st.header("Dokumenty")
+
     if not st.session_state.current_session:
         st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
     else:
@@ -526,10 +637,13 @@ def query_database():
         session_name = st.session_state.current_session
 
         query_text = st.text_input("Pytanie:")
+
+        response = None
+        sources = None
         
         col1, col2 = st.columns(2)
         with col1:
-            provider = st.selectbox("Dostawca", [ "PG", "Ollama", "OpenAI"])
+            provider = st.selectbox("Dostawca", get_available_providers())
         with col2:
             if provider == "OpenAI":
                 model = st.selectbox("Model", ["OpenAI GPT-4o"])
@@ -542,17 +656,22 @@ def query_database():
             elif provider == "PG":
                 model = st.selectbox("Model", ["speakleash/Bielik-11B-v2.2-Instruct"])
 
+        # Add document selection
+        available_docs = get_available_collections(provider, session_name)
+                    
+        selected_doc = st.selectbox("Wybierz dokument", available_docs)
+
         col3, col4 = st.columns(2)
         with col3:
             chroma_k = st.number_input(
-                "Dokumenty pobrane z ChromaDB",
+                "Fragmenty pobrane z ChromaDB",
                 min_value=1,
                 max_value=30,
                 value=20
             )
         with col4:
             rerank_k = st.number_input(
-                "Dokumenty pobrane z rerankingu",
+                "Fragmenty pobrane z rerankingu",
                 min_value=1,
                 max_value=chroma_k,
                 value=min(10, chroma_k)
@@ -561,34 +680,28 @@ def query_database():
         lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
 
         if not st.session_state.loaded[provider]:
-             st.write("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
+             st.warning("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
 
-        if st.session_state.loaded[provider] and (st.button("Wyślij")):
+        if st.session_state.loaded[provider] and st.button("Wyślij") and query_text:
             with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
-                response, sources = query_rag(query_text, provider, model, lang)
-            modelInfo = f"Dostawca: {provider}, Model: {model}"
-            
-            st.session_state.chat_sessions[session_name].append({
-                "query": query_text,
-                "response": response,
-                "sources": sources,
-                "model": modelInfo
-            })
-            
-            save_chat_history()
+                response, sources = query_rag(query_text, provider, model, lang, selected_doc)
+
+                if response:
+                    modelInfo = f"Dostawca: {provider}, Model: {model}"
+                    st.session_state.chat_sessions[session_name].append({
+                        "query": query_text,
+                        "response": response,
+                        "sources": sources,
+                        "model": modelInfo
+                    })
+                    save_chat_history()
 
         st.subheader(f"Historia czatu dla sesji: {session_name}")
-        chat_history = [item for item in st.session_state.chat_sessions[session_name] if item['query'] is not None]
+        chat_history = st.session_state.chat_sessions[session_name]
         if chat_history:
-            if st.button("Wyczyść historię czatu", on_click=delete_chat_history, args=(session_name,)):
-                with st.spinner("Czyszczenie historii czatu..."):
-                    st.success("Historia czatu została wyczyszczona.")
-                    chat_history = []
-                    st.session_state.chat_sessions[session_name] = chat_history
-                
-            for idx, entry in enumerate(reversed(chat_history)):                
+            for idx, entry in enumerate(reversed(chat_history)):
                 real_idx = len(chat_history) - idx  # Calculate the real index for display
                 st.write(f"**Q{real_idx}:** {entry['query']}")
                 st.write(f"**A{real_idx} ({entry['model']}):** {entry['response']}")
