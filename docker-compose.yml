@@ -17,7 +17,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: ["gpu"]
-
   ollama:
     image: ollama/ollama
     ports:
@@ -31,7 +30,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: ["gpu"]
-
 volumes:
   ollama:
   data:

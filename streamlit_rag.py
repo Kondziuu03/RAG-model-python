@@ -4,6 +4,7 @@ import streamlit as st
 import sqlite3
 import requests
 import json
+import re
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain.schema.document import Document
@@ -300,7 +301,7 @@ def get_similar_documents(query: str, provider, selected_docs=None):
         return []
     
     all_results = []
-    k = st.session_state.get('chroma_k', 20)
+    k = st.session_state.get('chroma_k', 30)
     
     collection_name = get_collection_name(provider, st.session_state.current_session, selected_docs)
     
@@ -362,13 +363,13 @@ def PG(prompt):
     response_json = response.json()
     return response_json['response']
 
-def query_rag(query, provider, model, lang, selected_docs=None):
+def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
         
     reranked_results = get_reranked_documents(query, provider, selected_docs)
 
-    k = st.session_state.get('rerank_k', 10)
+    k = st.session_state.get('rerank_k', 15)
     top_results = reranked_results[:k]
 
     # Create enhanced metadata with text snippets and scores
@@ -400,17 +401,38 @@ def query_rag(query, provider, model, lang, selected_docs=None):
         """
     ) if lang == "Polski" else ChatPromptTemplate.from_template(
         """
+        You are a helpful assistant specializing in document analysis in English.
         Use the following pieces of information to answer the user's question.
         If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
-        Context: {context}\n
+        Context: {context}
         ---------------------------
-        Question: {question}\n
+        Question: {question}
         ---------------------------
 
         Provide a right answer with a short explanation.
+        If you quote a piece of text, mark it with quotation marks.
         """
     )
+
+    if brawl:
+        prompt_template = ChatPromptTemplate.from_template("""
+            Jesteś ekspertem od wymyślania pytań do tekstu.
+            Użyj poniższych informacji, aby stworzyć dokładnie tylko jedno pytanie na podstawie kontekstu.
+            Jeśli nie wiesz jak sformułować pytanie, po prostu powiedz, że nie wiesz.
+
+            Kontekst: {context}
+                                                           
+            Nie odpowiadaj na swoje pytanie. Podaj po prostu pytanie w znaczniku <question>.
+        """) if lang == "Polski" else ChatPromptTemplate.from_template("""
+            You are an expert in generating questions from text.
+            Use the following information to create exactly just one question based on the context.
+            If you don't know how to phrase the question, just say that you don't know.
+
+            Context: {context}
+
+            Do not answer your question. Just provide the question in the <question> tag.
+        """)
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
@@ -672,7 +694,8 @@ def query_database():
                 model = st.selectbox("Model", ["speakleash/Bielik-11B-v2.2-Instruct"])
 
         # Add document selection
-        available_docs = get_available_collections(provider, session_name)
+        with st.spinner("Pobieranie dostępnych dokumentów..."):
+            available_docs = get_available_collections(provider, session_name)
                     
         selected_doc = st.selectbox("Wybierz dokument", available_docs)
 
@@ -815,6 +838,72 @@ def settings_page():
                 st.error(message)
         else:
             st.error("Please select or create a session first!")
+            
+def brawl():
+    col1, col2 = st.columns(2)
+    with col1:
+        provider1 = st.selectbox("Dostawca 1", get_available_providers())
+        if provider1 == "OpenAI":
+            model1 = st.selectbox("Model 1", ["OpenAI GPT-4o"])
+        elif provider1 == "Ollama":
+            installed_models = get_installed_ollama_models()
+            if not installed_models:
+                st.error("Brak modeli Ollama. Upewnij się, że Ollama działa i ma zainstalowane modele.")
+                return
+            model1 = st.selectbox("Model 1", installed_models)
+        elif provider1 == "PG":
+            model1 = st.selectbox("Model 1", ["speakleash/Bielik-11B-v2.2-Instruct"])
+    with col2:
+        provider2 = st.selectbox("Dostawca 2", get_available_providers())
+        if provider2 == "OpenAI":
+            model2 = st.selectbox("Model 2", ["OpenAI GPT-4o"])
+        elif provider2 == "Ollama":
+            installed_models = get_installed_ollama_models()
+            if not installed_models:
+                st.error("Brak modeli Ollama. Upewnij się, że Ollama działa i ma zainstalowane modele.")
+                return
+            model2 = st.selectbox("Model 2", installed_models)
+        elif provider2 == "PG":
+            model2 = st.selectbox("Model 2", ["speakleash/Bielik-11B-v2.2-Instruct"])
+    query_text = st.text_input("Wprowadź pytanie")
+    lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
+    question_limit = st.number_input("Limit pytań", min_value=1, max_value=10, value=1)
+    available_docs = get_available_collections(provider1, st.session_state.current_session)
+    selected_doc = st.selectbox("Wybierz dokument", available_docs)
+
+    if not st.session_state.loaded[provider1] or not st.session_state.loaded[provider2]:
+        st.write("Żaden dokument nie został załadowany do bazy danych dla jednego z dostawców. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
+        return
+
+    if st.button("Rozpocznij bójkę") and query_text:
+        st.write(f"Rozpoczynamy bójkę między {model1} ({provider1}) a {model2} ({provider2})!")
+
+        col1, col2 = st.columns(2)
+        
+        question = query_text
+        for i in range(question_limit):
+            idx = i + 1
+            with col1:
+                st.write(f"**Q{idx}:** {question}")
+                with st.spinner(f"Pobieranie informacji na pytanie {idx}. od {provider1}..."):
+                    response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
+                    st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
+                with st.spinner(f"Generowanie pytania dla {provider2}..."):
+                    question1, sources1 = query_rag(response1, provider2, model2, lang, selected_doc, brawl=True)
+                    st.write(f"**F{idx}:** {question1}")
+                    match = re.search(r"<question>(.*?)</question>", question1)
+                    question = match.group(1) if match else question1
+            with col2:
+                st.write(f"**Q{idx}:** {question}")
+                with st.spinner(f"Pobieranie informacji na pytanie {idx}. od {provider2}..."):
+                    response2, sources2 = query_rag(question, provider2, model2, lang, selected_doc)
+                    st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
+                if i < question_limit - 1:
+                    with st.spinner(f"Generowanie pytania dla {provider1}..."):
+                        question2, sources2 = query_rag(response2, provider1, model1, lang, selected_doc, brawl=True)
+                        st.write(f"**F{idx}:** {question2}")
+                        match = re.search(r"<question>(.*?)</question>", question2)
+                        question = match.group(1) if match else question2
 
 pg = st.navigation([
     st.Page(settings_page, title="Ustawienia"),
@@ -822,6 +911,7 @@ pg = st.navigation([
     st.Page(manage_sessions, title="Sesje"), 
     st.Page(upload_files, title="Dokumenty"), 
     st.Page(query_database, title="Czat"),
+    st.Page(brawl, title="Arena")
 ])
 
 pg.run()
