@@ -85,17 +85,7 @@ def delete_session(session_name):
     conn.close()
 
     for provider in get_available_providers():
-        try:
-            collection_name = get_collection_name(provider, session_name)
-            db = Chroma(
-                persist_directory=CHROMA_PATH,
-                embedding_function=get_embedding_function(provider),
-                collection_name=collection_name,
-                collection_metadata={"hnsw:space": "cosine"}
-            )
-            db.delete_collection()
-        except Exception as e:
-            st.warning(f"Could not delete collection for {provider}: {str(e)}")
+        clear_database(provider)
 
 def get_embedding_function(provider):
     settings = get_settings()
@@ -518,6 +508,31 @@ def get_available_collections(provider, session_name):
     
     return collections
 
+def clear_all_chroma():
+    try:
+        if os.path.exists(CHROMA_PATH):
+            # Get all collections and delete them
+            client = Chroma(
+                persist_directory=CHROMA_PATH,
+                embedding_function=get_embedding_function("PG"),
+                collection_name="temp"
+            )
+            
+            for collection in client._client.list_collections():
+                db = Chroma(
+                    persist_directory=CHROMA_PATH,
+                    embedding_function=get_embedding_function("PG"),
+                    collection_name=collection.name
+                )
+                db.delete_collection()
+            
+            # Reset loaded state
+            st.session_state.loaded = {p: False for p in get_available_providers()}
+            
+            return True, "Successfully cleared all ChromaDB collections!"
+    except Exception as e:
+        return False, f"Error clearing ChromaDB: {str(e)}"
+
 st.title("RAG - przeszukiwanie dokumentów")
 
 if "chat_sessions" not in st.session_state:
@@ -787,6 +802,19 @@ def settings_page():
         }
         save_settings(settings)
         st.success("Ustawienia zostały zapisane!")
+
+    st.divider()
+    st.subheader("Zarządzanie bazą danych")
+    
+    if st.button("Wyczyść wszystkie załadowane dokumenty", type="primary"):
+        if st.session_state.current_session:
+            success, message = clear_all_chroma()
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+        else:
+            st.error("Please select or create a session first!")
 
 pg = st.navigation([
     st.Page(settings_page, title="Ustawienia"),
