@@ -66,11 +66,18 @@ def load_chat_history():
         chat_sessions[session_name].append({
             "query": query,
             "response": response,
-            "sources": json.loads(sources),
+            "sources": json.loads(sources) if sources else None,
             "model": model
         })
     conn.close()
     return chat_sessions
+
+def delete_chat_history(session_name):
+    conn = sqlite3.connect(DATABASE_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE chat_sessions SET query = NULL, response = NULL, sources = NULL WHERE session_name = ?", (session_name,))
+    conn.commit()
+    conn.close()
 
 def delete_session(session_name):
     conn = sqlite3.connect(DATABASE_PATH)
@@ -179,7 +186,7 @@ def add_to_chroma(chunks: list[Document], provider):
         db.add_documents(chunks_with_ids, ids=chunk_ids)
         
         collection_size = len(db.get()['ids'])
-        st.info(f"Dodano {collection_size} dokumentów do kolekcji {collection_name}.")
+        st.info(f"Dodano {collection_size} fragmentów do kolekcji {collection_name}.")
         
     except Exception as e:
         st.error(f"Error adding documents to database: {str(e)}")
@@ -556,7 +563,7 @@ def query_database():
         if not st.session_state.loaded[provider]:
              st.write("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
 
-        if st.session_state.loaded[provider] and st.button("Wyślij") and query_text:
+        if st.session_state.loaded[provider] and (st.button("Wyślij")):
             with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
@@ -573,9 +580,15 @@ def query_database():
             save_chat_history()
 
         st.subheader(f"Historia czatu dla sesji: {session_name}")
-        chat_history = st.session_state.chat_sessions[session_name]
+        chat_history = [item for item in st.session_state.chat_sessions[session_name] if item['query'] is not None]
         if chat_history:
-            for idx, entry in enumerate(reversed(chat_history)):
+            if st.button("Wyczyść historię czatu", on_click=delete_chat_history, args=(session_name,)):
+                with st.spinner("Czyszczenie historii czatu..."):
+                    st.success("Historia czatu została wyczyszczona.")
+                    chat_history = []
+                    st.session_state.chat_sessions[session_name] = chat_history
+                
+            for idx, entry in enumerate(reversed(chat_history)):                
                 real_idx = len(chat_history) - idx  # Calculate the real index for display
                 st.write(f"**Q{real_idx}:** {entry['query']}")
                 st.write(f"**A{real_idx} ({entry['model']}):** {entry['response']}")
