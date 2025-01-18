@@ -26,7 +26,7 @@ CHROMA_PATH = "chroma"
 def get_available_providers():
     settings = get_settings()
     providers = ["PG", "Ollama"]
-    if settings.get('openai_api_key'):
+    if settings.get('OPENAI_API_KEY'):
         providers.append("OpenAI")
     return providers
 
@@ -615,7 +615,7 @@ def upload_files():
         st.write(f"### Aktywna sesja: {st.session_state.current_session}")
         
         uploaded_files = st.file_uploader("Prześlij pliki PDF", type="pdf", accept_multiple_files=True, help="Maksymalny rozmiar pliku: 200MB")
-        provider = st.selectbox("Dostawca", ["PG", "Ollama", "OpenAI"]) 
+        provider = st.selectbox("Dostawca", get_available_providers()) 
         
         if st.button("Resetuj bazę dokumentów"):
             clear_database(provider)
