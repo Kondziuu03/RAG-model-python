@@ -16,6 +16,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
+from torch import cuda
 
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
@@ -109,7 +110,7 @@ def get_embedding_function(provider):
     elif provider == "PG":
         return HuggingFaceEmbeddings(
             model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-            model_kwargs={'device': 'cpu'},
+            model_kwargs={'device': 'cuda' if cuda.is_available() else 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
 
@@ -497,7 +498,6 @@ def update_loaded():
 
 def upload_files():
     st.header("Dokumenty")
-
     if not st.session_state.current_session:
         st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
     else:

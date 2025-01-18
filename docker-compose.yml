@@ -10,6 +10,13 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     depends_on:
       - ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
 
   ollama:
     image: ollama/ollama
