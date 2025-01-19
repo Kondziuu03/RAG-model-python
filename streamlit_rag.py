@@ -375,14 +375,12 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
     # Create enhanced metadata with text snippets and scores
     enhanced_sources = []
     for doc, score in top_results:
-        text_snippet = doc.page_content[:300] + "..."
-        
         source_info = {
             'id': doc.metadata.get('id', 'N/A'),
             'page': doc.metadata.get('page', 'N/A'),
             'source': doc.metadata.get('source', 'N/A'),
             'score': f"{score:.4f}",
-            'text_snippet': text_snippet
+            'text_snippet': doc.page_content
         }
         enhanced_sources.append(source_info)
 
@@ -752,7 +750,8 @@ def query_database():
                             st.write(f"📑 **Strona:** {source.get('page', 'N/A')}")
                             st.write(f"📁 **Źródło:** {source.get('source', 'N/A')}")
                             st.write(f"🎯 **Scoring:** {source.get('score', 'N/A')}")
-                            st.write(f"📝 **Fragment tekstu:** {source.get('text_snippet', 'N/A')}")
+                            st.write(f"📝 **Fragment tekstu:** *Kliknij, aby rozwinąć*")
+                            st.html(f"<style>#i{idx} summary{{display:inline;cursor:pointer}}#i{idx} summary::after{{content:'...'}}#i{idx}[open] summary::after{{content:''}}</style><details id=i{idx}><summary>{source.get('text_snippet', 'N/A')[:300]}</summary>{source.get('text_snippet', 'N/A')[300:]}</details>")
                     else:
                         st.write("Brak źródeł dla tej odpowiedzi.")
                 st.markdown("---")
