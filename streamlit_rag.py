@@ -691,12 +691,6 @@ def query_database():
             elif provider == "PG":
                 model = st.selectbox("Model", ["speakleash/Bielik-11B-v2.2-Instruct"])
 
-        # Add document selection
-        with st.spinner("Pobieranie dostępnych dokumentów..."):
-            available_docs = get_available_collections(provider, session_name)
-                    
-        selected_doc = st.selectbox("Wybierz dokument", available_docs)
-
         col3, col4 = st.columns(2)
         with col3:
             chroma_k = st.number_input(
@@ -714,6 +708,12 @@ def query_database():
             )
 
         lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
+
+        # Add document selection
+        with st.spinner("Pobieranie dostępnych dokumentów..."):
+            available_docs = get_available_collections(provider, session_name)
+                    
+        selected_doc = st.selectbox("Wybierz dokument", available_docs)
 
         if not st.session_state.loaded[provider]:
              st.warning("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
@@ -888,7 +888,7 @@ def brawl():
                     response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
                     st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
                 with st.spinner(f"Generowanie pytania dla {provider2}..."):
-                    question1, sources1 = query_rag(response1, provider2, model2, lang, selected_doc, brawl=True)
+                    question1, sources1 = query_rag(response1, provider1, model1, lang, selected_doc, brawl=True)
                     st.write(f"**F{idx}:** {question1}")
                     match = re.search(r"<question>(.*?)</question>", question1)
                     question = match.group(1) if match else question1
@@ -899,7 +899,7 @@ def brawl():
                     st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
                 if i < question_limit - 1:
                     with st.spinner(f"Generowanie pytania dla {provider1}..."):
-                        question2, sources2 = query_rag(response2, provider1, model1, lang, selected_doc, brawl=True)
+                        question2, sources2 = query_rag(response2, provider2, model2, lang, selected_doc, brawl=True)
                         st.write(f"**F{idx}:** {question2}")
                         match = re.search(r"<question>(.*?)</question>", question2)
                         question = match.group(1) if match else question2
