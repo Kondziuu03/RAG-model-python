@@ -719,7 +719,7 @@ def query_database():
                 "Fragmenty pobrane z rerankingu",
                 min_value=1,
                 max_value=round(chroma_k/2),
-                value=min(10, round(chroma_k/4))
+                value=min(15, round(chroma_k/4))
             )
 
         lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
@@ -728,7 +728,7 @@ def query_database():
              st.warning("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
 
         if st.session_state.loaded[provider] and st.button("Wyślij") and query_text:
-            with st.spinner(f"Pobieranie informacji na pytanie \"{query_text}\"..."):
+            with st.spinner(f"Generowanie odpowiedzi na pytanie \"{query_text}\"..."):
                 st.session_state.chroma_k = chroma_k
                 st.session_state.rerank_k = rerank_k
                 response, sources = query_rag(query_text, provider, model, lang, selected_doc)
@@ -899,7 +899,7 @@ def brawl():
             "Fragmenty pobrane z rerankingu",
             min_value=1,
             max_value=round(chroma_k/2),
-            value=min(10, round(chroma_k/4))
+            value=min(15, round(chroma_k/4))
         )
 
     if not st.session_state.loaded[provider1] or not st.session_state.loaded[provider2]:
@@ -918,21 +918,21 @@ def brawl():
             idx = i + 1
             with col1:
                 st.write(f"**Q{idx}:** {question}")
-                with st.spinner(f"Pobieranie informacji na pytanie {idx}. od {provider1}..."):
+                with st.spinner(f"PGenerowanie odpowiedzi na pytanie {idx}. od {model2} ({provider2})..."):
                     response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
                     st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
-                with st.spinner(f"Generowanie pytania dla {provider2}..."):
+                with st.spinner(f"Generowanie pytania dla {model2} ({provider2})..."):
                     question1, sources1 = query_rag("null", provider1, model1, lang, selected_doc, brawl=True)
                     st.write(f"**F{idx}:** {question1}")
                     match = re.search(r"<question>(.*?)</question>", question1)
                     question = match.group(1) if match else question1
             with col2:
                 st.write(f"**Q{idx}:** {question}")
-                with st.spinner(f"Pobieranie informacji na pytanie {idx}. od {provider2}..."):
+                with st.spinner(f"PGenerowanie odpowiedzi na pytanie {idx}. od {model1} ({provider1})..."):
                     response2, sources2 = query_rag(question, provider2, model2, lang, selected_doc)
                     st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
                 if i < question_limit - 1:
-                    with st.spinner(f"Generowanie pytania dla {provider1}..."):
+                    with st.spinner(f"Generowanie pytania dla {model1} ({provider1})..."):
                         question2, sources2 = query_rag("null", provider2, model2, lang, selected_doc, brawl=True)
                         st.write(f"**F{idx}:** {question2}")
                         match = re.search(r"<question>(.*?)</question>", question2)
