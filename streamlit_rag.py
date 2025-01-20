@@ -128,7 +128,7 @@ def clear_database(provider):
             
         # Delete document-specific collections
         if available_docs:
-            for doc_name in available_docs:
+            for doc_name, _ in available_docs:
                 collection_name = get_collection_name(provider, st.session_state.current_session, doc_name)
                 try:
                     db = Chroma(
@@ -421,7 +421,7 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
 
             Kontekst: {context}
                                                            
-            Nie odpowiadaj na swoje pytanie. Podaj po prostu pytanie w znaczniku <question>.
+            Nie odpowiadaj na swoje pytanie. Podaj po prostu pytanie w znaczniku <question>{{pytanie}}</question>.
         """) if lang == "Polski" else ChatPromptTemplate.from_template("""
             You are an expert in generating questions from text.
             Use the following information to create exactly just one question based on the context.
@@ -429,7 +429,7 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
 
             Context: {context}
 
-            Do not answer your question. Just provide the question in the <question> tag.
+            Do not answer your question. Just provide the question in the <question>{{question}}</question> tag.
         """)
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
@@ -522,7 +522,7 @@ def get_available_collections(provider, session_name):
                     collection_metadata={"hnsw:space": "cosine"}
                 )
                 if len(db.get()['ids']) > 0:  # Only add if collection has documents
-                    collections.append(doc_name)
+                    collections.append([doc_name, len(db.get()['ids'])])
             except Exception as e:
                 st.warning(f"Could not check collection {collection.name}: {str(e)}")
     
@@ -609,7 +609,6 @@ def update_loaded():
         # Get all collections for this provider
         available_docs = get_available_collections(provider, st.session_state.current_session)
         has_documents = False
-        
         try:
             base_collection_name = get_collection_name(provider, st.session_state.current_session)
             db = Chroma(
@@ -622,9 +621,9 @@ def update_loaded():
                 has_documents = True
         except:
             pass
-            
+        
         if not has_documents and available_docs:
-            for doc_name in available_docs:
+            for doc_name, _ in available_docs:
                 try:
                     collection_name = get_collection_name(provider, st.session_state.current_session, doc_name)
                     db = Chroma(
@@ -691,13 +690,23 @@ def query_database():
             elif provider == "PG":
                 model = st.selectbox("Model", ["speakleash/Bielik-11B-v2.2-Instruct"])
 
+        # Add document selection
+        with st.spinner("Pobieranie dostępnych dokumentów..."):
+            available_docs = get_available_collections(provider, session_name)
+                    
+        docs = [doc_name for doc_name, _ in available_docs]
+        counts = {}
+        for doc_name, count in available_docs:
+            counts[doc_name] = count
+        selected_doc = st.selectbox("Wybierz dokument", docs)
+
         col3, col4 = st.columns(2)
         with col3:
             chroma_k = st.number_input(
                 "Fragmenty pobrane z ChromaDB",
                 min_value=1,
-                max_value=30,
-                value=20
+                max_value=round(counts[selected_doc]/2),
+                value=round(counts[selected_doc]/10)
             )
         with col4:
             rerank_k = st.number_input(
@@ -708,12 +717,6 @@ def query_database():
             )
 
         lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
-
-        # Add document selection
-        with st.spinner("Pobieranie dostępnych dokumentów..."):
-            available_docs = get_available_collections(provider, session_name)
-                    
-        selected_doc = st.selectbox("Wybierz dokument", available_docs)
 
         if not st.session_state.loaded[provider]:
              st.warning("Żaden dokument nie został załadowany do bazy danych. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
@@ -867,14 +870,38 @@ def brawl():
     query_text = st.text_input("Wprowadź pytanie")
     lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
     question_limit = st.number_input("Limit pytań", min_value=1, max_value=10, value=1)
-    available_docs = get_available_collections(provider1, st.session_state.current_session)
-    selected_doc = st.selectbox("Wybierz dokument", available_docs)
+    with st.spinner("Pobieranie dostępnych dokumentów..."):
+        available_docs1 = get_available_collections(provider1, st.session_state.current_session)
+        available_docs2 = get_available_collections(provider2, st.session_state.current_session)
+        intersection = [(doc_name, count) for doc_name, count in available_docs1 if doc_name in [doc_name for doc_name, _ in available_docs2]]
+        docs = [doc_name for doc_name, _ in intersection]
+        counts = {}
+        for doc_name, count in intersection:
+            counts[doc_name] = count
+    selected_doc = st.selectbox("Wybierz dokument", docs)
+
+    with col1:
+        chroma_k = st.number_input(
+            "Fragmenty pobrane z ChromaDB",
+            min_value=1,
+            max_value=round(counts[selected_doc]/2),
+            value=round(counts[selected_doc]/10)
+        )
+    with col2:
+        rerank_k = st.number_input(
+            "Fragmenty pobrane z rerankingu",
+            min_value=1,
+            max_value=20,
+            value=min(10, chroma_k)
+        )
 
     if not st.session_state.loaded[provider1] or not st.session_state.loaded[provider2]:
         st.write("Żaden dokument nie został załadowany do bazy danych dla jednego z dostawców. Proszę załadować dokumenty w zakładce 'Dokumenty'.")
         return
 
     if st.button("Rozpocznij bójkę") and query_text:
+        st.session_state.chroma_k = chroma_k
+        st.session_state.rerank_k = rerank_k
         st.write(f"Rozpoczynamy bójkę między {model1} ({provider1}) a {model2} ({provider2})!")
 
         col1, col2 = st.columns(2)
@@ -888,7 +915,7 @@ def brawl():
                     response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
                     st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
                 with st.spinner(f"Generowanie pytania dla {provider2}..."):
-                    question1, sources1 = query_rag(response1, provider1, model1, lang, selected_doc, brawl=True)
+                    question1, sources1 = query_rag("null", provider1, model1, lang, selected_doc, brawl=True)
                     st.write(f"**F{idx}:** {question1}")
                     match = re.search(r"<question>(.*?)</question>", question1)
                     question = match.group(1) if match else question1
@@ -899,7 +926,7 @@ def brawl():
                     st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
                 if i < question_limit - 1:
                     with st.spinner(f"Generowanie pytania dla {provider1}..."):
-                        question2, sources2 = query_rag(response2, provider2, model2, lang, selected_doc, brawl=True)
+                        question2, sources2 = query_rag("null", provider2, model2, lang, selected_doc, brawl=True)
                         st.write(f"**F{idx}:** {question2}")
                         match = re.search(r"<question>(.*?)</question>", question2)
                         question = match.group(1) if match else question2
