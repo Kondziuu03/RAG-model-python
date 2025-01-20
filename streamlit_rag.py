@@ -108,7 +108,7 @@ def get_embedding_function(provider):
 def clear_database(provider):
     try:
         if not st.session_state.current_session:
-            st.error("Please select or create a session first!")
+            st.error("Najpierw wybierz lub utwórz sesję!")
             return
             
         available_docs = get_available_collections(provider, st.session_state.current_session)
@@ -144,9 +144,9 @@ def clear_database(provider):
         # Reset the loaded state for this provider
         st.session_state.loaded[provider] = False
         
-        st.success(f"Successfully cleared all documents for {provider}!")
+        st.success(f"Usunięto załadnowane dokumenty dla {provider}!")
     except Exception as e:
-        st.error(f"Error clearing collections: {str(e)}")
+        st.error(f"Wystąpił błąd podczas usuwania: {str(e)}")
 
 def split_documents(documents: list[Document]):
     text_splitter = RecursiveCharacterTextSplitter(
@@ -201,11 +201,11 @@ def get_collection_name(provider, session_name, document_name=None):
 def add_to_chroma(chunks: list[Document], provider, document_name=None):
     try:
         if not chunks:
-            st.warning("No documents to add to the database.")
+            st.warning("Brak fragmentów do dodania.")
             return
         
         if not st.session_state.current_session:
-            st.error("Please select or create a session first!")
+            st.error("Najpierw wybierz lub utwórz sesję!")
             return
         
         embedding_function = get_embedding_function(provider)
@@ -256,7 +256,7 @@ def get_data_path(provider, session_name):
 
 def populate_database(files, provider):
     if not st.session_state.current_session:
-        st.error("Please select or create a session first!")
+        st.error("Najpierw wybierz lub utwórz sesję!")
         return
         
     if not os.path.exists(CHROMA_PATH):
@@ -297,7 +297,7 @@ def get_reranked_documents(query: str, provider, selected_docs=None):
     
 def get_similar_documents(query: str, provider, selected_docs=None):
     if not st.session_state.current_session:
-        st.error("Please select or create a session first!")
+        st.error("Najpierw wybierz lub utwórz sesję!")
         return []
     
     all_results = []
@@ -549,9 +549,9 @@ def clear_all_chroma():
             # Reset loaded state
             st.session_state.loaded = {p: False for p in get_available_providers()}
             
-            return True, "Successfully cleared all ChromaDB collections!"
+            return True, "Pomyślnie wyczyszczono ChromaDB!"
     except Exception as e:
-        return False, f"Error clearing ChromaDB: {str(e)}"
+        return False, f"Wystąpił błąd podzas czyszczenia ChromaDB: {str(e)}"
 
 st.title("RAG - przeszukiwanie dokumentów")
 
@@ -712,8 +712,8 @@ def query_database():
             rerank_k = st.number_input(
                 "Fragmenty pobrane z rerankingu",
                 min_value=1,
-                max_value=chroma_k,
-                value=min(10, chroma_k)
+                max_value=round(chroma_k/2),
+                value=min(10, round(chroma_k/4))
             )
 
         lang = st.radio("Język", ["Polski", "Angielski"], horizontal=True)
@@ -833,13 +833,14 @@ def settings_page():
     
     if st.button("Wyczyść wszystkie załadowane dokumenty", type="primary"):
         if st.session_state.current_session:
-            success, message = clear_all_chroma()
-            if success:
-                st.success(message)
-            else:
-                st.error(message)
+            with st.spinner("Trwa czyszczenie ChromaDB..."):
+                success, message = clear_all_chroma()
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
         else:
-            st.error("Please select or create a session first!")
+            st.error("Najpierw wybierz lub utwórz sesję!")
             
 def brawl():
     col1, col2 = st.columns(2)
@@ -891,8 +892,8 @@ def brawl():
         rerank_k = st.number_input(
             "Fragmenty pobrane z rerankingu",
             min_value=1,
-            max_value=20,
-            value=min(10, chroma_k)
+            max_value=round(chroma_k/2),
+            value=min(10, round(chroma_k/4))
         )
 
     if not st.session_state.loaded[provider1] or not st.session_state.loaded[provider2]:
