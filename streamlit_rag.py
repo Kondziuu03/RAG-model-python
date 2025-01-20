@@ -417,6 +417,9 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
         prompt_template = ChatPromptTemplate.from_template("""
             Jesteś ekspertem od wymyślania pytań do tekstu.
             Użyj poniższych informacji, aby stworzyć dokładnie tylko jedno pytanie na podstawie kontekstu.
+            Pytanie to powinno dotyczyć treści tekstu, fabuly lub informacji zawartych w tekście.
+            Nie pytaj o znaczenie słów, formy wyrazów czy też poprwaność gramatyczną.
+            Nie proś o użycie słowa w zdaniu lub odmianę.
             Jeśli nie wiesz jak sformułować pytanie, po prostu powiedz, że nie wiesz.
 
             Kontekst: {context}
@@ -425,6 +428,9 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
         """) if lang == "Polski" else ChatPromptTemplate.from_template("""
             You are an expert in generating questions from text.
             Use the following information to create exactly just one question based on the context.
+            The question should be about the content of the text, the plot, or the information contained in the text.
+            Do not ask about the meaning of words, word forms, or grammatical correctness.
+            Do not ask for the use of a word in a sentence or its inflection.
             If you don't know how to phrase the question, just say that you don't know.
 
             Context: {context}
