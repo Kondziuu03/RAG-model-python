@@ -388,14 +388,17 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
         """
         Jesteś pomocnym asystentem specjalizującym się w analizie dokumentów w języku polskim.
         Użyj poniższych informacji, aby odpowiedzieć na pytanie użytkownika.
-        Jeśli nie znasz odpowiedzi, po prostu powiedz, że nie wiesz, nie próbuj wymyślać odpowiedzi.
-
-        Kontekst: {context}
-        Pytanie: {question}
-
+        Jeśli nie znasz odpowiedzi lub brakuje ci potrzebnego kontekstu, po prostu powiedz, że nie wiesz, nie próbuj wymyślać odpowiedzi.\n\n
+        
+        ---------------------------\n\n
+        Kontekst: {context}\n\n
+        ---------------------------\n\n
+        Pytanie: {question}\n\n
+        ---------------------------\n\n
         Podaj prawidłową odpowiedź wraz z krótkim wyjaśnieniem. 
         Używaj poprawnej polskiej gramatyki i interpunkcji.
-        Jeśli cytujesz fragment tekstu, oznacz go cudzysłowem.
+        Nie cytuj fragmentów tekstu.
+        Odpowiedz krótko i konkretnie w maksymalnie dwóch zdaniach.
         """
     ) if lang == "Polski" else ChatPromptTemplate.from_template(
         """
@@ -711,8 +714,8 @@ def query_database():
             chroma_k = st.number_input(
                 "Fragmenty pobrane z ChromaDB",
                 min_value=1,
-                max_value=round(counts[selected_doc]/2),
-                value=round(counts[selected_doc]/10)
+                max_value=40 if selected_doc is None else max(20, round(counts[selected_doc]/2)),
+                value=20 if selected_doc is None else max(4, round(counts[selected_doc]/10))
             )
         with col4:
             rerank_k = st.number_input(
@@ -891,8 +894,8 @@ def brawl():
         chroma_k = st.number_input(
             "Fragmenty pobrane z ChromaDB",
             min_value=1,
-            max_value=round(counts[selected_doc]/2),
-            value=round(counts[selected_doc]/10)
+            max_value=20 if selected_doc is None else round(counts[selected_doc]/2),
+            value=10 if selected_doc is None else round(counts[selected_doc]/10)
         )
     with col2:
         rerank_k = st.number_input(
