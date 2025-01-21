@@ -852,6 +852,10 @@ def settings_page():
             st.error("Najpierw wybierz lub utwórz sesję!")
             
 def brawl():
+    st.header("Arena")
+    if not st.session_state.current_session:
+        st.warning("Brak aktywnej sesji. Proszę utworzyć lub wybrać sesję w 'Zarządzanie sesjami'.")
+        return
     col1, col2 = st.columns(2)
     with col1:
         provider1 = st.selectbox("Dostawca 1", get_available_providers())
