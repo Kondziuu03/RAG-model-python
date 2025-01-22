@@ -925,7 +925,7 @@ def brawl():
             idx = i + 1
             with col1:
                 st.write(f"**Q{idx}:** {question}")
-                with st.spinner(f"PGenerowanie odpowiedzi na pytanie {idx}. od {model2} ({provider2})..."):
+                with st.spinner(f"Generowanie odpowiedzi na pytanie {idx}. od {model2} ({provider2})..."):
                     response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
                     st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
                 with st.spinner(f"Generowanie pytania dla {model2} ({provider2})..."):
@@ -935,7 +935,7 @@ def brawl():
                     question = match.group(1) if match else question1
             with col2:
                 st.write(f"**Q{idx}:** {question}")
-                with st.spinner(f"PGenerowanie odpowiedzi na pytanie {idx}. od {model1} ({provider1})..."):
+                with st.spinner(f"Generowanie odpowiedzi na pytanie {idx}. od {model1} ({provider1})..."):
                     response2, sources2 = query_rag(question, provider2, model2, lang, selected_doc)
                     st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
                 if i < question_limit - 1:
