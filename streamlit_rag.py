@@ -17,6 +17,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
+import random
 
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
@@ -416,31 +417,6 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
         """
     )
 
-    if brawl:
-        prompt_template = ChatPromptTemplate.from_template("""
-            Jesteś ekspertem od wymyślania pytań do tekstu.
-            Użyj poniższych informacji, aby stworzyć dokładnie tylko jedno pytanie na podstawie kontekstu.
-            Pytanie to powinno dotyczyć treści tekstu, fabuly lub informacji zawartych w tekście.
-            Nie pytaj o znaczenie słów, formy wyrazów czy też poprwaność gramatyczną.
-            Nie proś o użycie słowa w zdaniu lub odmianę.
-            Jeśli nie wiesz jak sformułować pytanie, po prostu powiedz, że nie wiesz.
-
-            Kontekst: {context}
-                                                           
-            Nie odpowiadaj na swoje pytanie. Podaj po prostu pytanie w znaczniku <question>{{pytanie}}</question>.
-        """) if lang == "Polski" else ChatPromptTemplate.from_template("""
-            You are an expert in generating questions from text.
-            Use the following information to create exactly just one question based on the context.
-            The question should be about the content of the text, the plot, or the information contained in the text.
-            Do not ask about the meaning of words, word forms, or grammatical correctness.
-            Do not ask for the use of a word in a sentence or its inflection.
-            If you don't know how to phrase the question, just say that you don't know.
-
-            Context: {context}
-
-            Do not answer your question. Just provide the question in the <question>{{question}}</question> tag.
-        """)
-
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in top_results])
     prompt = prompt_template.format(context=context, question=query)
     
@@ -467,6 +443,69 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
 
     return response, enhanced_sources
 
+def query_rag_brawl(provider, model, lang, selected_docs=None):
+    if not os.path.exists(CHROMA_PATH):
+        os.makedirs(CHROMA_PATH)
+    
+    collection_name = get_collection_name(provider, st.session_state.current_session, selected_docs)
+    db = Chroma(
+        persist_directory=CHROMA_PATH,
+        collection_name=collection_name
+    )
+    results = db.get()['documents']
+    
+    k = st.session_state.get('rerank_k', 15)
+    random_results = random.sample(results, k)
+
+    prompt_template = ChatPromptTemplate.from_template("""
+Jesteś ekspertem od wymyślania pytania do tekstu.
+Użyj poniższych informacji, aby stworzyć dokładnie tylko jedno pytanie pomiędzy znacznikami <question> i </question> na podstawie kontekstu.
+Pytanie to powinno dotyczyć treści tekstu, fabuly lub informacji zawartych w tekście.
+Nie generuj odpowiedzi na to pytanie.
+Nie pytaj o znaczenie słów, formy wyrazów czy też poprwaność gramatyczną.
+Nie proś o przykład użycia słowa w zdaniu lub odmianę słów.
+
+Kontekst: {context}
+
+Nie odpowiadaj na swoje pytanie. Podaj po prostu pytanie w znaczniku <question>pytanie</question>.
+""") if lang == "Polski" else ChatPromptTemplate.from_template("""
+You are an expert in generating questions based on text.
+Use the following information to create exactly one question without an answer based on the context.
+The question should be about the content of the text, the plot, or the information contained in the text.
+Do not generate an answer to this question.
+Do not ask about the meaning of words, word forms, or grammatical correctness.
+Do not ask to use a word in a sentence or to inflect a word.
+
+Context: {context}
+
+Do not answer your question. Just ask the question in the <question>question</question> tag.                                                        
+""")
+
+    context = '\n\n---\n\n'.join(random_results)
+    prompt = prompt_template.format(context=context)
+    
+    client = None
+    response = None
+    settings = get_settings()
+
+    if provider == "OpenAI":
+        if not settings['OPENAI_API_KEY']:
+            raise ValueError("OpenAI API key not configured. Please set it in Settings.")
+        client = OpenAI(api_key=settings['OPENAI_API_KEY'])
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ]
+        ).choices[0].message.content
+    elif provider == "Ollama":
+        client = OllamaLLM(model=model, base_url=settings['OLLAMA_URL'])
+        response = client.invoke(prompt)
+    elif provider == "PG":
+        response = PG(prompt)
+
+    return response
 
 def pull_ollama_model(model_name):
     try:
@@ -925,11 +964,11 @@ def brawl():
             idx = i + 1
             with col1:
                 st.write(f"**Q{idx}:** {question}")
-                with st.spinner(f"Generowanie odpowiedzi na pytanie {idx}. od {model2} ({provider2})..."):
+                with st.spinner(f"Generowanie odpowiedzi na pytanie {idx}. od {model2} ({provider2})..." if idx > 1 else f"Generowanie odpowiedzi na Twoje pytanie..."):
                     response1, sources1 = query_rag(question, provider1, model1, lang, selected_doc)
                     st.write(f"**A{idx} ({provider1}/{model1}):** {response1}")
                 with st.spinner(f"Generowanie pytania dla {model2} ({provider2})..."):
-                    question1, sources1 = query_rag("null", provider1, model1, lang, selected_doc, brawl=True)
+                    question1 = query_rag_brawl(provider1, model1, lang, selected_doc)
                     st.write(f"**F{idx}:** {question1}")
                     match = re.search(r"<question>(.*?)</question>", question1)
                     question = match.group(1) if match else question1
@@ -940,7 +979,7 @@ def brawl():
                     st.write(f"**A{idx} ({provider2}/{model2}):** {response2}")
                 if i < question_limit - 1:
                     with st.spinner(f"Generowanie pytania dla {model1} ({provider1})..."):
-                        question2, sources2 = query_rag("null", provider2, model2, lang, selected_doc, brawl=True)
+                        question2 = query_rag_brawl(provider2, model2, lang, selected_doc)
                         st.write(f"**F{idx}:** {question2}")
                         match = re.search(r"<question>(.*?)</question>", question2)
                         question = match.group(1) if match else question2
