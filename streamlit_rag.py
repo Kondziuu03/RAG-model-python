@@ -19,6 +19,15 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 import random
 
+import psutil
+import time
+try:
+    import torch
+    import nvidia_smi
+    HAS_GPU = True
+except ImportError:
+    HAS_GPU = False
+
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
 
@@ -88,6 +97,69 @@ def delete_session(session_name):
 
     for provider in get_available_providers():
         clear_database(provider)
+        
+        
+def measure_resources(func):
+    def wrapper(*args, **kwargs):
+        process = psutil.Process()
+        
+        # Initialize GPU monitoring if available
+        if HAS_GPU:
+            try:
+                nvidia_smi.nvmlInit()
+                handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+                has_gpu = True
+            except:
+                has_gpu = False
+        else:
+            has_gpu = False
+        
+        # Start measurements
+        start_time = time.time()
+        start_cpu = process.cpu_percent()
+        start_memory = process.memory_info().rss / 1024 / 1024  # Convert to MB
+        if has_gpu:
+            start_gpu = nvidia_smi.nvmlDeviceGetUtilizationRates(handle).gpu
+            start_gpu_memory = nvidia_smi.nvmlDeviceGetMemoryInfo(handle).used / 1024 / 1024  # Convert to MB
+        
+        # Execute the function
+        result = func(*args, **kwargs)
+        
+        # End measurements
+        end_time = time.time()
+        end_cpu = process.cpu_percent()
+        end_memory = process.memory_info().rss / 1024 / 1024
+        if has_gpu:
+            end_gpu = nvidia_smi.nvmlDeviceGetUtilizationRates(handle).gpu
+            end_gpu_memory = nvidia_smi.nvmlDeviceGetMemoryInfo(handle).used / 1024 / 1024
+        
+        # Calculate differences
+        time_taken = end_time - start_time
+        memory_used = end_memory - start_memory
+        cpu_used = (start_cpu + end_cpu) / 2  # Average CPU usage
+        
+        # Create resource usage report
+        st.write("### Resource Usage:")
+        st.write(f"Time taken: {time_taken:.2f} seconds")
+        st.write(f"Memory used: {memory_used:.2f} MB")
+        st.write(f"Average CPU usage: {cpu_used:.1f}%")
+        
+        if has_gpu:
+            gpu_used = (start_gpu + end_gpu) / 2
+            gpu_memory_used = end_gpu_memory - start_gpu_memory
+            st.write(f"Average GPU usage: {gpu_used:.1f}%")
+            st.write(f"GPU Memory used: {gpu_memory_used:.2f} MB")
+            
+            # Also log to console for debugging
+            print(f"\nResource Usage for {func.__name__}:")
+            print(f"Time taken: {time_taken:.2f} seconds")
+            print(f"Memory used: {memory_used:.2f} MB")
+            print(f"Average CPU usage: {cpu_used:.1f}%")
+            print(f"Average GPU usage: {gpu_used:.1f}%")
+            print(f"GPU Memory used: {gpu_memory_used:.2f} MB")
+        
+        return result
+    return wrapper
 
 def get_embedding_function(provider):
     settings = get_settings()
@@ -255,6 +327,7 @@ def calculate_chunk_ids(chunks):
 def get_data_path(provider, session_name):
     return os.path.join("data", provider.lower(), session_name)
 
+@measure_resources
 def populate_database(files, provider):
     if not st.session_state.current_session:
         st.error("Najpierw wybierz lub utwórz sesję!")
@@ -364,6 +437,8 @@ def PG(prompt):
     response_json = response.json()
     return response_json['response']
 
+
+@measure_resources
 def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
     if not os.path.exists(CHROMA_PATH):
         os.makedirs(CHROMA_PATH)
