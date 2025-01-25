@@ -1,7 +1,7 @@
 services:
   streamlit:
-    # build: .
-    image: registry.gitlab.com/kondziuu03/rag-llm
+    build: .
+    #image: registry.gitlab.com/kondziuu03/rag-llm
     ports:
       - "8501:8501"
     volumes:
@@ -30,6 +30,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: ["gpu"]
+    restart: unless-stopped
 volumes:
   ollama:
   data:
