@@ -1,7 +1,7 @@
 services:
   streamlit:
-    #build: .
-    image: registry.gitlab.com/kondziuu03/rag-llm
+    build: .
+    #image: registry.gitlab.com/kondziuu03/rag-llm
     ports:
       - "8501:8501"
     volumes:
@@ -18,6 +18,7 @@ services:
               count: all
               capabilities: ["gpu"]
   ollama:
+    container_name: ollama-service
     image: ollama/ollama
     ports:
       - "11434:11434"
@@ -30,7 +31,18 @@ services:
             - driver: nvidia
               count: all
               capabilities: ["gpu"]
-    restart: unless-stopped
+
+  ollama-watchdog:
+    image: docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "while true; do
+             sleep 10800;
+             docker restart ollama-service;
+             done"
+    depends_on:
+      - ollama
 volumes:
   ollama:
   data:
