@@ -431,7 +431,6 @@ def query_rag(query, provider, model, lang, selected_docs=None, brawl=False):
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ]
         ).choices[0].message.content
@@ -495,7 +494,6 @@ Do not answer your question. Just ask the question in the <question>question</qu
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ]
         ).choices[0].message.content
