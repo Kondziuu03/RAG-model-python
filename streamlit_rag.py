@@ -18,6 +18,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 #from sentence_transformers import CrossEncoder
 from langchain_community.document_loaders import PyPDFLoader
 import random
+import docker
 
 DATABASE_PATH = "./data/chat_history.sqlite3"
 CHROMA_PATH = "chroma"
@@ -598,6 +599,16 @@ def clear_all_chroma():
             return True, "Pomyślnie wyczyszczono ChromaDB!"
     except Exception as e:
         return False, f"Wystąpił błąd podzas czyszczenia ChromaDB: {str(e)}"
+    
+def restart_ollama():
+    try:
+        client = docker.from_env()
+        container = client.containers.get('ollama-service')
+        container.restart()
+        return True, "Ollama została zrestartowana!"
+    except Exception as e:
+        return False, f"Error restarting Ollama container: {str(e)}"
+
 
 st.title("RAG - przeszukiwanie dokumentów")
 
@@ -873,6 +884,16 @@ def settings_page():
         }
         save_settings(settings)
         st.success("Ustawienia zostały zapisane!")
+
+    st.divider()
+    
+    if st.button("Restart Ollama"):
+        with st.spinner("Restartowanie Ollama..."):
+            success, message = restart_ollama()
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
 
     st.divider()
     st.subheader("Zarządzanie bazą danych")
